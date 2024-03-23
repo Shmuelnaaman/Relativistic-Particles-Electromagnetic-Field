@@ -1,7 +1,13 @@
  
 # Relativistic Particle Simulator
 
-## Version 1.6
+**Reletivistic columnb law 
+  Retarded field
+  Electromagnetic particle interactions
+  Energy loss due to synchrotron radiation
+  Reduced Landau-Lifshitz**
+  
+## Version #.1
 
 This Python-based simulation models the interactions of charged particles under relativistic conditions and electromagnetic fields. It incorporates special relativity principles, specifically focusing on the relativistic effects on particle dynamics and interactions based on Coulomb's law and electromagnetic field theory.
 
