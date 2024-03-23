@@ -1,10 +1,10 @@
  
 # Relativistic Particle Simulator
 
-**Reletivistic columnb law 
-  Retarded field
-  Electromagnetic particle interactions
-  Energy loss due to synchrotron radiation
+**Reletivistic columnb law, 
+  Retarded field,
+  Electromagnetic particle interactions,
+  Energy loss due to synchrotron radiation,
   Reduced Landau-Lifshitz**
   
 ## Version #.1
