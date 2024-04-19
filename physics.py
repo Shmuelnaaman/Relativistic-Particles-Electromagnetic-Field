@@ -122,7 +122,45 @@ class ElectromagneticEquations:
         new_position = position + (37*k1_v + 375*k2_v + 1500*k3_v + 2500*k4_v + 625*k5_v + 512*k6_v) * dt / 4480        
         return new_position, new_velocity  
 
-    #########################################        
+    #########################################      
+
+ 
+
+    def analytic_rel(self, p):
+        """
+        Calculates the position and velocity of a relativistic charged particle in a uniform magnetic field
+        at a given time, using numpy arrays for position and velocity. 
+        """
+        B = p.total_B_field.copy()
+        t = p.dt
+        m = p.mass  
+        q = -p.charge
+        vel = p.velocity.copy()
+        pos = p.position.copy()
+        c = self.c #299792458  # Speed of light in meters per second
+    
+        def rotate_vector(vector, axis, angle):
+            """Helper function to create a rotation matrix from an axis and angle (Rodrigues' rotation formula). """
+            K = np.array([[0, -axis[2], axis[1]], 
+                          [axis[2], 0, -axis[0]], 
+                          [-axis[1], axis[0], 0]])
+            rotation_matrix = np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * (K @ K)
+            return rotation_matrix @ vector
+    
+        gamma = self.Gamma(vel) #1 / np.sqrt(1 - np.linalg.norm(vel)**2 / c**2)
+        omega = q * np.linalg.norm(B) / (gamma * m)
+        B_unit = B / np.linalg.norm(B)    
+        vel_parallel = np.dot(vel, B_unit) * B_unit
+        vel_perp = vel - vel_parallel
+        vel_perp_rotated = rotate_vector(vel_perp, B_unit, omega * t)    
+        new_vel = vel_perp_rotated + vel_parallel 
+        displacement_perp = vel_perp_rotated * np.sin(omega * t) / omega - vel_perp * (1 - np.cos(omega * t)) / omega
+        new_pos = pos + displacement_perp + vel_parallel * t    
+        return new_pos, new_vel
+
+
+
+    
     def analytic(self, p):
         """
         Calculates the position and velocity of a charged particle in a uniform magnetic field
@@ -154,6 +192,53 @@ class ElectromagneticEquations:
         return new_pos, new_vel
         
     #########################################
+
+
+ 
+
+    def boris_push1(self, particle):
+        E = particle.total_E_field.copy()
+        B = particle.total_B_field.copy()
+        dt = particle.dt
+        m = particle.mass
+        q = particle.charge
+        position = particle.position.copy()
+        velocity = particle.velocity.copy()
+        q_over_m = q / m
+    
+        # Use more descriptive function name and comment to clarify gamma's role
+        def lorentz_factor(velocity):
+            return 1 / np.sqrt(1 - np.linalg.norm(velocity)**2)
+    
+        # Calculate gamma before the update
+        gamma = lorentz_factor(velocity)
+    
+        # Half-step velocity update due to the electric field
+        v_minus = velocity + q_over_m * E * (dt / 2.0) / gamma
+    
+        # Boris rotation in the magnetic field
+        t_vector = q_over_m * B * (dt / 2.0) / gamma
+        s = 2 * t_vector / (1 + np.linalg.norm(t_vector)**2)
+        v_prime = v_minus + np.cross(v_minus, t_vector)
+        v_plus = v_minus + np.cross(v_prime, s)
+    
+        # Second half-step velocity update due to the electric field
+        velocity = v_plus + q_over_m * E * (dt / 2.0) / gamma
+    
+        # Update gamma after the velocity update
+        gamma = lorentz_factor(velocity)
+    
+        # Update position using the average of the initial and final velocities
+        v_avg = (velocity + v_minus) / 2.0
+        position += v_avg * dt / gamma
+    
+        return position, velocity
+
+
+
+
+
+
     def boris_push(self, p):
         E = p.total_E_field.copy()
         B = p.total_B_field.copy()
@@ -184,7 +269,7 @@ class ElectromagneticEquations:
         v_avg = np.squeeze(v_avg)  # This will also convert v_avg from (1, 3) to (3,)
         position += v_avg * t / gamma  # Now this operation should proceed without error
 
-        position += v_avg * t / gamma        
+        #position += v_avg * t / gamma        
         return position, velocity
         
     #########################################        
