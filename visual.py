@@ -35,18 +35,7 @@ class VisualizationManager:
 #############################################################################################
     def run_simulation(self, mass_mults, charge_mult, e_initial_velocity, p_initial_velocity,
                        ERROR_THRESHOLD, dt, B, Q_F, electric_field, magnetic_field):
-        """
-        Initialize and run the particle simulation.
-        
-        Parameters:
-        - mass_mults: Multipliers for particle masses.
-        - charge_mult: Multiplier for particle charges.
-        - e_initial_velocity, p_initial_velocity: Initial velocities for electrons and protons.
-        - ERROR_THRESHOLD: Error threshold for simulation accuracy.
-        - dt: Time step for simulation updates.
-        - B, Q_F: Magnetic field and charge force parameters.
-        - electric_field, magnetic_field: Fields affecting particle dynamics.
-        """        
+      
         # Setup the simulation GUI with necessary parameters
         self.setup_simulation_gui(B,mass_mults)        
         # Assign parameters to instance variables
@@ -58,35 +47,18 @@ class VisualizationManager:
         self.electric_field, self.magnetic_field = electric_field, magnetic_field
         self.allow_creation = True        
         # Define available simulation methods
-        self.method_names = [
-            ("boris_push", 1, 'B'), ("analytic", 2, 'A'),                                 
-            ('analytic_rel', 3, 'AR'), ("boris_push", 4, 'B'),                        
-            ("vay_algorithm", 5, 'VA'), ("rk4_step", 6, 'L4'),
-            ("rk6_step", 7, 'L6'), ("relativ_intgrtr", 8, 'R'),
-            ("vay_push", 9, 'VP'), ("Hamiltonian", 10, 'H')    ]    
+        self.method_names = [("boris_push", 'B'), 
+                             ('analytic_rel', 'AR'),("vay_algorithm", 'VA'), 
+                             ("rk4_step", 'L4'),("rk6_step", 'L6'), 
+                             ("relativ_intgrtr", 'R'),("vay_push", 'VP'), 
+                             ("Hamiltonian", 'H') ]  
         # Initialize simulation with the first particle
         self.add_initial_particle()        
         # Execute the main simulation loop
         self.run_main_loop()        
         # Cleanup resources and exit the simulation properly
-        self.shutdown_simulation()
-
-    def setup_simulation_gui(self, B, mass_mults):
-        layout = [
-            [sg.Text('Magnetic Field'), sg.Slider(range=(-4000, 4000), orientation='h', 
-                                                  key='Magnetic Field', default_value=B, resolution=0.001)],
-            [sg.Text('Electric Field'), sg.Slider(range=(-3000, 3000), orientation='h', 
-                                                  key='Electric Field', default_value=0.00, resolution=0.001)],
-            [sg.Text('Mass Factor'), sg.Slider(range=(1, 2e3), orientation='h', 
-                                               key='Mass Factor', default_value=mass_mults, resolution=1)],
-            [sg.Checkbox('Particle Creation', key='allow_creation', default=True)],
-            [sg.Button('Update Simulation', key='update_simulation'),
-             sg.Button('Keep One Particle', key='keep_one_particle')],
-        ]
-        self.window = sg.Window('Simulation Controls', layout)
-        _, values = self.window.read(timeout=10)
-        self.update_simulation_parameters(values)
-
+        self.shutdown_simulation() 
+    
     def run_main_loop(self):
         timeout = 10
         counter = 0
@@ -117,15 +89,47 @@ class VisualizationManager:
             # Maintain desired frame rate
             self.clock.tick(240) 
     
-    def keep_one_particle(self):
-        if self.particle_manager.particles:
-            self.particle_manager.particles = [self.particle_manager.particles[0]]         
-    
+    def visualize(self, electric_field, magnetic_field, Q_F, B, counter, initial_zoom=1.0):
+        num_particles = len(self.particle_manager.particles)
+        self.screen.fill((0, 0, 0))
+        self.electric_field_surface.fill((0, 0, 0, 0))    
+        Z = np.zeros_like(self.x_in)    
+        # Stack X, Y, and Z to form a 3D array where each position vector is (x, y, z)
+        positions = np.dstack((self.x_in, self.y_in, Z))
+        #print(f"Type and value of x_in: {type(self.x_in)}, {self.x_in}")
+        #print(f"Type and value of y_in: {type(self.y_in)}, {self.y_in}")
+        E_field = electric_field(positions, Q_F)
+        B_field = magnetic_field(positions, B)
+        E_transformed, B_transformed = self.transform_fields(E_field, B_field, counter, num_particles)    
+        self.draw_arrows(E_transformed, B_transformed)
+        #print(counter , num_particles, counter , num_particles)
+        self.draw(self.particle_manager.particles, self.screen, counter % num_particles)
+        self.draw_particle_info(counter, num_particles)    
+        self.screen.blit(self.electric_field_surface, (0, 0))
+        pygame.display.flip()
+        return counter       
+#############################################################################################      
+    def setup_simulation_gui(self, B, mass_mults):
+        layout = [
+            [sg.Text('Magnetic Field'), sg.Slider(range=(-4000, 4000), orientation='h', 
+                                                  key='Magnetic Field', default_value=B, resolution=0.001)],
+            [sg.Text('Electric Field'), sg.Slider(range=(-3000, 3000), orientation='h', 
+                                                  key='Electric Field', default_value=0.00, resolution=0.001)],
+            [sg.Text('Mass Factor'), sg.Slider(range=(1, 2e3), orientation='h', 
+                                               key='Mass Factor', default_value=mass_mults, resolution=1)],
+            [sg.Checkbox('Particle Creation', key='allow_creation', default=True)],
+            [sg.Button('Update Simulation', key='update_simulation'),
+             sg.Button('Keep One Particle', key='keep_one_particle')],
+        ]
+        self.window = sg.Window('Simulation Controls', layout)
+        _, values = self.window.read(timeout=10)
+        self.update_simulation_parameters(values)
+
     def update_simulation_parameters(self, values):
         self.B_sim = values['Magnetic Field']
         self.Q_F_sim = values['Electric Field']
         self.mass_mults_sim = values['Mass Factor']
-        self.allow_creation = values['allow_creation']     
+        self.allow_creation = values['allow_creation']      
 
     def handle_pygame_events(self, counter):
         num_particles = len(self.particle_manager.particles)
@@ -158,7 +162,7 @@ class VisualizationManager:
             # Sort the available methods by their usage count (prefer less used methods)
             sorted_methods = sorted(self.method_names, key=lambda method: method_usage.get(method[0], 0)) 
             # Choose the least used method
-            method_name, thickness, letter = sorted_methods[0]
+            method_name,  letter = sorted_methods[0]
             push_method = getattr(self.em_equations, method_name)            
             self.particle_manager.add_particle(
                 np.array([x, y, 0.0]),
@@ -166,7 +170,7 @@ class VisualizationManager:
                 self.charge_mult * self.e_charge,
                 self.mass_mults * self.e_mass,
                 self.dt,
-                self.em_equations.Lorentz,
+                self.em_equations.Lorentz, # Lorentz, Landau_Lifshitz
                 self.em_equations.radiation_reaction,
                 push_method, 
                 self.electric_field,
@@ -175,7 +179,25 @@ class VisualizationManager:
             print(f'Particle added, method: {method_name}')        
         counter += 1
         return counter
-
+        
+    def handle_mousewheel_event(self, event):
+        mouse_screen_x, mouse_screen_y = pygame.mouse.get_pos()    
+        # Apply zoom factor change
+        zoom_factor_change = 1.05 if event.y > 0 else 0.95
+        new_zoom_factor = self.zoom_factor * zoom_factor_change        
+        # Convert screen coordinates to world coordinates using the current zoom center and factor
+        world_x, world_y = self.screen_to_world(mouse_screen_x, mouse_screen_y, self.zoom_center, self.zoom_factor)        
+        # Update the zoom factor
+        self.zoom_factor = new_zoom_factor        
+        # Convert the world coordinates back to screen coordinates using the new zoom factor
+        new_mouse_screen_x, new_mouse_screen_y = self.world_to_screen(world_x, world_y, self.zoom_center, self.zoom_factor)        
+        # Calculate the difference between where the mouse was and where the point has moved on screen
+        screen_dx = mouse_screen_x - new_mouse_screen_x
+        screen_dy = mouse_screen_y - new_mouse_screen_y        
+        # Shift the zoom center by the difference to keep the particle under the mouse stationary
+        self.zoom_center[0] += screen_dx
+        self.zoom_center[1] += screen_dy               
+#############################################################################################              
     def add_initial_particle(self):
         self.particle_manager.add_particle(
             np.array([400.0, 301.0, 0.0]),
@@ -186,28 +208,57 @@ class VisualizationManager:
             self.em_equations.radiation_reaction,
             self.em_equations.boris_push,
             self.electric_field, self.magnetic_field,  'p'  )  
-
-    def visualize(self, electric_field, magnetic_field, Q_F, B, counter, initial_zoom=1.0):
-        num_particles = len(self.particle_manager.particles)
-        self.screen.fill((0, 0, 0))
-        self.electric_field_surface.fill((0, 0, 0, 0))    
-        Z = np.zeros_like(self.x_in)    
-        # Stack X, Y, and Z to form a 3D array where each position vector is (x, y, z)
-        positions = np.dstack((self.x_in, self.y_in, Z))
-        #print(f"Type and value of x_in: {type(self.x_in)}, {self.x_in}")
-        #print(f"Type and value of y_in: {type(self.y_in)}, {self.y_in}")
-        E_field = electric_field(positions, Q_F)
-        B_field = magnetic_field(positions, B)
-        E_transformed, B_transformed = self.transform_fields(E_field, B_field, counter, num_particles)    
-        self.draw_arrows(E_transformed, B_transformed)
-        #print(counter , num_particles, counter , num_particles)
-        self.draw(self.particle_manager.particles, self.screen, counter % num_particles)
-        self.draw_particle_info(counter, num_particles)    
-        self.screen.blit(self.electric_field_surface, (0, 0))
-        pygame.display.flip()
-        return counter    
+        
+    def keep_one_particle(self):
+        if self.particle_manager.particles:
+            self.particle_manager.particles = [self.particle_manager.particles[0]]  
+            
+    def remove_escaping_particles(self):
+        if not self.particle_manager.particles:
+            return        
+        positions = np.array([particle.position for particle in self.particle_manager.particles])
+        velocities = np.array([np.squeeze(particle.velocity) for particle in self.particle_manager.particles])        
+        # Calculate if any component of the velocity is NaN and invert the result
+        valid_velocities = ~np.isnan(velocities).any(axis=1)        
+        max_distance = 2 * max(self.WIDTH, self.HEIGHT)
+        within_bounds = np.linalg.norm(positions, axis=1) < max_distance        
+        # Combine conditions
+        valid_indices = valid_velocities & within_bounds        
+        # Initialize a new list for particles to keep
+        new_particle_list = []
+        for particle, valid in zip(self.particle_manager.particles, valid_indices):
+            if valid:
+                new_particle_list.append(particle)
+            else:
+                print(f"Removing particle: {particle.letter}")  # Printing the name of the particle being removed    
+        # Update the particle list
+        self.particle_manager.particles = new_particle_list     
 
 #############################################################################################  
+    def draw(self, particles, screen , count ):
+        """Main drawing function."""
+        MAX_TIME_DILATION = 200
+        MAX_VELOCITY = self.em_equations.c
+        MAX_ENERGY_LOSS = 1e-4        
+        self.draw_trajectory(particles, screen)         
+        self.draw_particles(particles, screen)
+        self.draw_scale_marker(screen, 1000) 
+        max_particle = particles[count]
+        velocity = np.linalg.norm(max_particle.velocity)
+        gamma = max_particle.gamma
+        energy_loss=max_particle.energy_loss/(max_particle.gamma*max_particle.mass*(self.em_equations.c**2)+ self.epsilon)    
+        screen_width, screen_height = screen.get_size()
+        bar_positions = { "V[c]": (screen_width - 100, 160 + (screen_height - 20) // 2),
+            "Gamma": (screen_width - 50, 160 + (screen_height - 20) // 2),
+            "Enrg Loss": (screen_width - 150, 160 + (screen_height - 20) // 2)  }    
+        self.draw_bar(screen, "V[c]", velocity, MAX_VELOCITY, bar_positions["V[c]"] )
+        self.draw_bar(screen, "Gamma", gamma, MAX_TIME_DILATION, bar_positions["Gamma"] )
+        self.draw_bar(screen, "Enrg Loss", max(energy_loss, 0), MAX_ENERGY_LOSS, bar_positions["Enrg Loss"])    
+        font_dt = self.get_font(24) 
+        value_text = font_dt.render(f"Δt = {max_particle.dt:.1e}", True, (254, 254, 254))
+        value_text_rect = value_text.get_rect(centerx=50, y=10)
+        screen.blit(value_text, value_text_rect)
+        
     def draw_arrows(self, E_trans, B_trans):
         def process_field(field, arrow_scale):
             # Calculate magnitudes and directions appropriately
@@ -236,76 +287,53 @@ class VisualizationManager:
         x_positions = range(0, self.WIDTH, dynamic_spacing)
         y_positions = range(0, self.HEIGHT, dynamic_spacing)
         self.x_in, self.y_in = np.meshgrid(x_positions, y_positions)    
-        # Call redraw function if necessary
-        self.redraw_all()  # Make sure this method refreshes the visualization properly
-    
-    def draw(self, particles, screen , count ):
-        """Main drawing function."""
-        MAX_TIME_DILATION = 200
-        MAX_VELOCITY = self.em_equations.c
-        MAX_ENERGY_LOSS = 1e-4        
-        self.draw_trajectory(particles, screen)         
-        self.draw_particles(particles, screen)
-        self.draw_scale_marker(screen, 1000) 
-        max_particle = particles[count]
-        velocity = np.linalg.norm(max_particle.velocity)
-        gamma = max_particle.gamma
-        energy_loss=max_particle.energy_loss/(max_particle.gamma*max_particle.mass*(self.em_equations.c**2)+ self.epsilon)    
-        screen_width, screen_height = screen.get_size()
-        bar_positions = { "V[c]": (screen_width - 100, 160 + (screen_height - 20) // 2),
-            "Gamma": (screen_width - 50, 160 + (screen_height - 20) // 2),
-            "Enrg Loss": (screen_width - 150, 160 + (screen_height - 20) // 2)  }    
-        self.draw_bar(screen, "V[c]", velocity, MAX_VELOCITY, bar_positions["V[c]"] )
-        self.draw_bar(screen, "Gamma", gamma, MAX_TIME_DILATION, bar_positions["Gamma"] )
-        self.draw_bar(screen, "Enrg Loss", max(energy_loss, 0), MAX_ENERGY_LOSS, bar_positions["Enrg Loss"])    
-        font_dt = self.get_font(24) 
-        #font = pygame.font.Font(None, 24)
-        value_text = font_dt.render(f"Δt = {max_particle.dt:.1e}", True, (254, 254, 254))
-        value_text_rect = value_text.get_rect(centerx=50, y=10)
-        screen.blit(value_text, value_text_rect)
+        self.redraw_all()  # Make sure this method refreshes the visualization properly     
 
     def draw_particles(self, particles, screen):
         """Draws all particles on the screen using preloaded fonts and optimized calculations."""
-        # Use the preloaded font for particles
         font = self.get_font(16)    
         for particle in particles:
             if not particle.active:
-                continue  # Skip 
-            # Convert world coordinates to screen coordinates
-            x_screen = (particle.position[0] - self.zoom_center[0]) * self.zoom_factor + self.WIDTH // 2
-            y_screen = (particle.position[1] - self.zoom_center[1]) * self.zoom_factor + self.HEIGHT // 2  
+                continue  # Skip inactive particles                
+            try:
+                x_screen = (particle.position[0] - self.zoom_center[0]) * self.zoom_factor + self.WIDTH // 2
+                y_screen = (particle.position[1] - self.zoom_center[1]) * self.zoom_factor + self.HEIGHT // 2
+            except TypeError as e:
+                print(f"Invalid value for particle position encountered: {e}")
+                print(f"Particle letter: {particle.letter}")
+                continue  # Skip drawing this particle            
+            # Check if the computed screen coordinates are valid numbers
+            if x_screen is None or not isinstance(x_screen, (int, float)):
+                print(f"Invalid x_screen value: {x_screen} for particle with letter: {particle.letter}")
+                return x_screen, particle.letter  # Return the value and the particle's letter    
             # Draw the particle as a circle on the screen
-            pygame.draw.circle(screen, (250, 250, 250), (int(x_screen), int(y_screen)), particle.radius, 0)    
-            # Render the particle's label (e.g., "e-", "p+") at its position
+            pygame.draw.circle(screen, (250, 250, 250), (int(x_screen), int(y_screen)), particle.radius, 0)            
             text = font.render(particle.letter, True, particle.color)
             text_rect = text.get_rect(center=(int(x_screen), int(y_screen)))
-            screen.blit(text, text_rect)  # Blit the text onto the screen    
-    
-    def remove_escaping_particles(self):
-        if not self.particle_manager.particles:
-            return    
-        positions = np.array([particle.position for particle in self.particle_manager.particles])
-        velocities = np.array([np.squeeze(particle.velocity) for particle in self.particle_manager.particles])    
-        # Calculate if any component of the velocity is NaN and invert the result
-        valid_velocities = ~np.isnan(velocities).any(axis=1)    
-        max_distance = 2 * max(self.WIDTH, self.HEIGHT)
-        within_bounds = np.linalg.norm(positions, axis=1) < max_distance    
-        # Combine conditions
-        valid_indices = valid_velocities & within_bounds    
-        # Filter particles
-        self.particle_manager.particles = [
-            particle for particle, valid in zip(self.particle_manager.particles, valid_indices) if valid ] 
- 
-    def draw_particle_info(self,   counter, num_particles):
+            screen.blit(text, text_rect)  # Blit the text onto the screen                
+
+    def draw_particle_info(self, counter, num_particles):
         part_in = counter % num_particles 
         if self.particle_manager.particles:
-            particle = self.particle_manager.particles[part_in ]
+            particle = self.particle_manager.particles[part_in]
             center_x, center_y = self.WIDTH - 200, self.HEIGHT - 100            
-            pygame.draw.circle(self.screen, particle.color, (center_x, center_y), 10)     
+            pygame.draw.circle(self.screen, particle.color, (center_x, center_y), 10)            
+            # Draw particle info
             font_p = self.get_font(18) 
-            text = font_p.render(particle.letter, True, (254, 254, 254))
-            text_rect = text.get_rect(center=(center_x, center_y))
-            self.screen.blit(text, text_rect)   
+            particle_text = font_p.render(particle.letter, True, (254, 254, 254))
+            particle_text_rect = particle_text.get_rect(center=(center_x, center_y))
+            self.screen.blit(particle_text, particle_text_rect)    
+        # Draw zoom factor at the top-left corner
+        zoom_text = f"Zoom: {self.zoom_factor:.1e}"
+        font_zoom = self.get_font(18)  # You can adjust the font size as needed
+        zoom_surface = font_zoom.render(zoom_text, True, (254, 254, 254))
+        zoom_rect = zoom_surface.get_rect(topleft=(10, 30))  # Position at the top-left corner        
+        self.screen.blit(zoom_surface, zoom_rect)
+        zoom_text = f"Proposed Δt: {1e-9 * (1 / self.zoom_factor):.1e}"
+        font_zoom = self.get_font(18)  # You can adjust the font size as needed
+        zoom_surface = font_zoom.render(zoom_text, True, (254, 254, 254))
+        zoom_rect = zoom_surface.get_rect(topleft=(10, 50))  # Position at the top-left corner        
+        self.screen.blit(zoom_surface, zoom_rect)        
             
     def draw_trajectory(self, particles, screen):
         """Draws the trajectory of a single particle."""
@@ -329,9 +357,7 @@ class VisualizationManager:
             filled_height = int(bar_height * log_value / log_max_value)
         else:
             filled_height = int(bar_height * (value / max_value))
-
         pygame.draw.circle(self.screen, (250,250,250), (self.WIDTH//2, self.HEIGHT//2), 1)     
-
         pygame.draw.rect(screen, (255, 255, 255), (bar_x, bar_y, bar_width, bar_height), 1)
         pygame.draw.rect(screen, color, (bar_x, bar_y + bar_height - filled_height, bar_width, filled_height))
         font_trj = self.get_font(18) 
@@ -342,7 +368,6 @@ class VisualizationManager:
         screen.blit(label_text, label_text_rect)
         screen.blit(value_text, value_text_rect)                
      
-############################################################################################     
     def draw_scale_marker(self, screen, scale_length_mm):
         scale_length_pixels = scale_length_mm / 1000 * self.zoom_factor        
         if scale_length_pixels < 1:
@@ -362,19 +387,18 @@ class VisualizationManager:
         screen.blit(scale_text, scale_text_rect)                
  
 #############################################################################################    
-    def handle_mousewheel_event(self, event):
-        mouse_x, mouse_y = pygame.mouse.get_pos()
-        #mouse_x, mouse_y = mouse_x/self.zoom_factor, mouse_y/self.zoom_factor
-        zoom_factor_change = 1.05 if event.y > 0 else 0.9
-        old_zoom_factor = self.zoom_factor
-        self.zoom_factor *= zoom_factor_change
-        self.zoom_factor = max(1e0, min(self.zoom_factor, 1e31))    
-        # Calculate the new zoom center based on the mouse position
-        zoom_x, zoom_y = self.zoom_center
-        new_zoom_x = mouse_x
-        new_zoom_y = mouse_y
-        self.zoom_center = [new_zoom_x, new_zoom_y]        
-        
+    def screen_to_world(self, screen_x, screen_y, zoom_center, zoom_factor):
+        # Convert screen coordinates to world coordinates
+        world_x = (screen_x - zoom_center[0]) / zoom_factor + zoom_center[0]
+        world_y = (screen_y - zoom_center[1]) / zoom_factor + zoom_center[1]
+        return world_x, world_y
+
+    def world_to_screen(self, world_x, world_y, zoom_center, zoom_factor):
+        # Convert world coordinates back to screen coordinates
+        screen_x = (world_x - zoom_center[0]) * zoom_factor + zoom_center[0]
+        screen_y = (world_y - zoom_center[1]) * zoom_factor + zoom_center[1]
+        return screen_x, screen_y                 
+ 
 #############################################################################################         
     def transform_fields(self, E_field, B_field, counter, num_particle):
         #print(counter,num_particle)
@@ -389,7 +413,7 @@ class VisualizationManager:
         B_transformed = normalize_field(B_transformed)
         E_transformed = normalize_field(E_transformed)        
         return E_transformed, B_transformed
-         
+#############################################################################################           
     def update_display(self):
         # Update the display with the latest drawing
         pygame.display.flip()

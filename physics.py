@@ -172,36 +172,6 @@ class ElectromagneticEquations:
         return new_pos, new_vel
         
     ######################################### 
-    def boris_push1(self, particle):
-        E = particle.total_E_field.copy()
-        B = particle.total_B_field.copy()
-        dt = particle.dt
-        m = particle.mass
-        q = particle.charge
-        position = particle.position.copy()
-        velocity = particle.velocity.copy()
-        q_over_m = q / m    
-        # Use more descriptive function name and comment to clarify gamma's role
-        def lorentz_factor(velocity):
-            return 1 / np.sqrt(1 - np.linalg.norm(velocity)**2)    
-        # Calculate gamma before the update
-        gamma = lorentz_factor(velocity)    
-        # Half-step velocity update due to the electric field
-        v_minus = velocity + q_over_m * E * (dt / 2.0) / gamma    
-        # Boris rotation in the magnetic field
-        t_vector = q_over_m * B * (dt / 2.0) / gamma
-        s = 2 * t_vector / (1 + np.linalg.norm(t_vector)**2)
-        v_prime = v_minus + np.cross(v_minus, t_vector)
-        v_plus = v_minus + np.cross(v_prime, s)    
-        # Second half-step velocity update due to the electric field
-        velocity = v_plus + q_over_m * E * (dt / 2.0) / gamma    
-        # Update gamma after the velocity update
-        gamma = lorentz_factor(velocity)    
-        # Update position using the average of the initial and final velocities
-        v_avg = (velocity + v_minus) / 2.0
-        position += v_avg * dt / gamma    
-        return position, velocity
-
     def boris_push(self, p):
         E = p.total_E_field.copy()
         B = p.total_B_field.copy()
@@ -209,29 +179,21 @@ class ElectromagneticEquations:
         m = p.mass
         q = p.charge
         position = p.position.copy()
-        velocity = p.velocity.copy()
-        q_over_m = q / m        
-        # Calculate gamma before the update
-        gamma = self.Gamma(velocity) #1 / np.sqrt(1 - np.linalg.norm(velocity)**2)        
-        # Half-step velocity update due to the electric field
-        v_minus = velocity + q_over_m * E * (t / 2.0) / gamma        
+        velocity = p.velocity.copy()    
+        # Calculate initial gamma
+        gamma = self.Gamma(velocity)    
+        # Half-step velocity update due to electric field
+        v_minus = velocity + (q / m) * E * (t / 2.0) / gamma    
         # Boris rotation in the magnetic field
-        t_vector = q_over_m * B * (t / 2.0) / gamma
+        t_vector = (q / m) * B * (t / 2.0) / gamma
         s = 2 * t_vector / (1 + np.linalg.norm(t_vector)**2)
         v_prime = v_minus + np.cross(v_minus, t_vector)
-        v_plus = v_minus + np.cross(v_prime, s)        
+        v_plus = v_minus + np.cross(v_prime, s)    
         # Second half-step velocity update due to the electric field
-        velocity = v_plus + q_over_m * E * (t / 2.0) / gamma        
-        # Update gamma after the velocity update
-        gamma = self.Gamma(velocity)# 1 / np.sqrt(1 - np.linalg.norm(velocity)**2)        
-        # Update position using the average of the initial and final velocities
-        v_avg = (velocity + v_minus) / 2.0
-        #print("position shape:", position.shape)
-        #print("v_avg shape:", v_avg.shape)
-        #print("t shape:", t.shape, "gamma shape:", gamma.shape)
-        v_avg = np.squeeze(v_avg)  # This will also convert v_avg from (1, 3) to (3,)
-        position += v_avg * t / gamma  # Now this operation should proceed without error
-        #position += v_avg * t / gamma        
+        gamma = self.Gamma(v_plus)
+        velocity = v_plus + (q / m) * E * (t / 2.0) / gamma    
+        # Update position
+        position += velocity * t    
         return position, velocity
         
     #########################################        
@@ -325,7 +287,37 @@ class ElectromagneticEquations:
         return r_new, v_new
 
     #########################################        
+
     def vay_algorithm(self, p):
+        E = p.total_E_field  # Assume these fields are numpy arrays
+        B = p.total_B_field
+        m = p.mass
+        q = p.charge
+        dt = p.dt
+        x = p.position.copy()
+        v = p.velocity.copy()
+    
+        # Calculate the initial Lorentz factor gamma
+        gamma = self.Gamma(v)
+    
+        # Calculate the intermediate velocity v_prime
+        v_prime = v + (q * dt / (2.0 * m * gamma)) * (E + np.cross(v, B))
+        
+        # Calculate the Lorentz factor gamma_prime for the updated velocity v_prime
+        gamma_prime = self.Gamma(v_prime)
+        
+        # Update the velocity using the magnetic field rotation step
+        t = (q * dt / (2.0 * m * gamma_prime)) * B
+        s = 2.0 * t / (1.0 + np.linalg.norm(t)**2)
+        v_new = v_prime + np.cross(v_prime + np.cross(v_prime, t), s)
+    
+        # Calculate the new position x_new using the average of the old and new velocities
+        x_new = x + dt * (v + v_new) / 2.0
+        
+        return x_new, v_new
+
+
+    def vay_algorithm1(self, p):
         # use average velocity as the new velocity to maintain energy
         E = p.total_E_field.copy()   
         B = p.total_B_field.copy()
