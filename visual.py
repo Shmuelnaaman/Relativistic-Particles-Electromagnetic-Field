@@ -143,7 +143,46 @@ class VisualizationManager:
                     counter = self.handle_mousebuttondown_event( counter, num_particles )
         return True, counter  
 
+
     def handle_mousebuttondown_event(self, counter, num_particles):
+        mouse_x, mouse_y = pygame.mouse.get_pos()
+        zoom_x, zoom_y = self.zoom_center
+        x, y = self.screen_to_world(mouse_x, mouse_y, (zoom_x, zoom_y), self.zoom_factor)
+        
+        if num_particles < self.num_particle and self.allow_creation:
+            # Remaining code for method selection and particle creation
+            used_methods = [particle.velocity_method for particle in self.particle_manager.particles]
+            method_usage = {}
+            for method in used_methods:
+                method_name = method.__name__
+                if method_name in method_usage:
+                    method_usage[method_name] += 1
+                else:
+                    method_usage[method_name] = 1
+            sorted_methods = sorted(self.method_names, key=lambda method: method_usage.get(method[0], 0))
+            method_name, letter = sorted_methods[0]
+            push_method = getattr(self.em_equations, method_name)
+            
+            self.particle_manager.add_particle(
+                np.array([x, y, 0.0]),
+                np.array(self.e_initial_velocity),
+                self.charge_mult * self.e_charge,
+                self.mass_mults * self.e_mass,
+                self.dt,
+                self.em_equations.Lorentz, # Lorentz, Landau_Lifshitz
+                self.em_equations.radiation_reaction,
+                push_method, 
+                self.electric_field,
+                self.magnetic_field, 
+                letter
+            )
+            print(f'Particle added, method: {method_name}')        
+        counter += 1
+        return counter
+
+
+    
+    def handle_mousebuttondown_event1(self, counter, num_particles):
         mouse_x, mouse_y = pygame.mouse.get_pos()
         zoom_x, zoom_y = self.zoom_center
         x = zoom_x + (mouse_x - zoom_x) / self.zoom_factor
@@ -258,7 +297,30 @@ class VisualizationManager:
         value_text = font_dt.render(f"Δt = {max_particle.dt:.1e}", True, (254, 254, 254))
         value_text_rect = value_text.get_rect(centerx=50, y=10)
         screen.blit(value_text, value_text_rect)
-        
+
+    def draw_arrows1(self, E_trans, B_trans):
+        def process_field(field, arrow_scale):
+            magnitude = np.linalg.norm(field, axis=-1)
+            safe_magnitude = np.where(magnitude > self.epsilon, magnitude, np.full_like(magnitude, self.epsilon))
+            direction = field / safe_magnitude[..., np.newaxis]    
+            # Calculate end positions based on the zoomed grid
+            arrow_lengths = 20  # Static length for simplicity, can adjust
+            arrow_end_x = self.x_in + arrow_lengths * direction[..., 0]
+            arrow_end_y = self.y_in + arrow_lengths * direction[..., 1]    
+            start_pos = np.column_stack((self.x_in.ravel(), self.y_in.ravel()))
+            end_pos = np.column_stack((arrow_end_x.ravel(), arrow_end_y.ravel()))    
+            # Convert these positions to screen coordinates using the provided functions
+            start_pos_screen = [self.world_to_screen(x, y, self.zoom_center, self.zoom_factor) for x, y in start_pos]
+            end_pos_screen = [self.world_to_screen(x, y, self.zoom_center, self.zoom_factor) for x, y in end_pos]    
+            return start_pos_screen, end_pos_screen    
+        # Process and draw arrows for both electric and magnetic fields
+        E_start_pos_screen, E_end_pos_screen = process_field(E_trans, arrow_scale=20)
+        B_start_pos_screen, B_end_pos_screen = process_field(B_trans, arrow_scale=20)    
+        for start, end in zip(E_start_pos_screen, E_end_pos_screen):
+            pygame.draw.line(self.electric_field_surface, self.ARROW_COLOR_E, start, end, 1)    
+        for start, end in zip(B_start_pos_screen, B_end_pos_screen):
+            pygame.draw.line(self.electric_field_surface, self.ARROW_COLOR_B, start, end, 2)
+    
     def draw_arrows(self, E_trans, B_trans):
         def process_field(field, arrow_scale):
             # Calculate magnitudes and directions appropriately
@@ -442,6 +504,5 @@ class VisualizationManager:
                 self.window.close()
         except Exception as e:
             print(f"Error closing PySimpleGUI window: {e}")
-
 
       

@@ -2,7 +2,7 @@ import numpy as np
 import copy    
     
 class ElectromagneticEquations:
-    
+                            
     def __init__(self, c = 299792458):
         self.c = c
         self.EPSILON_0 = 8.8541878128e-12 
@@ -119,7 +119,7 @@ class ElectromagneticEquations:
         at a given time, using numpy arrays for position and velocity. 
         """
         B = p.total_B_field.copy()
-        t = p.dt
+        dt = p.dt
         m = p.mass  
         q = -p.charge
         vel = p.velocity.copy()
@@ -137,19 +137,20 @@ class ElectromagneticEquations:
         B_unit = B / np.linalg.norm(B)    
         vel_parallel = np.dot(vel, B_unit) * B_unit
         vel_perp = vel - vel_parallel
-        vel_perp_rotated = rotate_vector(vel_perp, B_unit, omega * t)    
+        vel_perp_rotated = rotate_vector(vel_perp, B_unit, omega * dt)    
         new_vel = vel_perp_rotated + vel_parallel 
-        displacement_perp = vel_perp_rotated * np.sin(omega * t) / omega - vel_perp * (1 - np.cos(omega * t)) / omega
-        new_pos = pos + displacement_perp + vel_parallel * t    
+        displacement_perp = vel_perp_rotated * np.sin(omega * dt) / omega - vel_perp * (1 - np.cos(omega * dt)) / omega
+        new_pos = pos + displacement_perp + vel_parallel * dt    
         return new_pos, new_vel
-    
+        
+    #########################################              
     def analytic(self, p):
         """
         Calculates the position and velocity of a charged particle in a uniform magnetic field
         at a given time, using numpy arrays for position and velocity. 
         """        
         B = p.total_B_field.copy()
-        t = p.dt
+        dt = p.dt
         m = p.mass  
         q = -p.charge
         vel = p.velocity.copy()
@@ -165,17 +166,17 @@ class ElectromagneticEquations:
         B_unit = B / B_norm     
         vel_parallel = np.dot(vel, B_unit) * B_unit
         vel_perp = vel - vel_parallel
-        vel_perp_rotated = rotate_vector(vel_perp, B_unit, omega * t)    
+        vel_perp_rotated = rotate_vector(vel_perp, B_unit, omega * dt)    
         new_vel = vel_perp_rotated + vel_parallel 
-        displacement_perp = vel_perp_rotated * np.sin(omega * t) / omega - vel_perp * (1 - np.cos(omega * t)) / omega
-        new_pos = pos + displacement_perp + vel_parallel * t    
+        displacement_perp = vel_perp_rotated * np.sin(omega * dt) / omega - vel_perp * (1 - np.cos(omega * dt)) / omega
+        new_pos = pos + displacement_perp + vel_parallel * dt    
         return new_pos, new_vel
         
-    ######################################### 
+    #########################################                  
     def boris_push(self, p):
         E = p.total_E_field.copy()
         B = p.total_B_field.copy()
-        t = p.dt
+        dt = p.dt
         m = p.mass
         q = p.charge
         position = p.position.copy()
@@ -183,17 +184,23 @@ class ElectromagneticEquations:
         # Calculate initial gamma
         gamma = self.Gamma(velocity)    
         # Half-step velocity update due to electric field
-        v_minus = velocity + (q / m) * E * (t / 2.0) / gamma    
+        v_minus = velocity + (q / m) * E * (dt / 2.0) / gamma    
         # Boris rotation in the magnetic field
-        t_vector = (q / m) * B * (t / 2.0) / gamma
+        t_vector = (q / m) * B * (dt / 2.0) / gamma
         s = 2 * t_vector / (1 + np.linalg.norm(t_vector)**2)
         v_prime = v_minus + np.cross(v_minus, t_vector)
         v_plus = v_minus + np.cross(v_prime, s)    
+        # Check if the updated velocity exceeds the speed of light
+        if np.linalg.norm(v_plus) > self.c:
+            position += v_plus * dt  # Update position with v_plus before returning
+            print('b')
+            return position, v_plus  # Return position and v_plus
+            
         # Second half-step velocity update due to the electric field
         gamma = self.Gamma(v_plus)
-        velocity = v_plus + (q / m) * E * (t / 2.0) / gamma    
+        velocity = v_plus + (q / m) * E * (dt / 2.0) / gamma    
         # Update position
-        position += velocity * t    
+        position += velocity * dt    
         return position, velocity
         
     #########################################        
@@ -210,12 +217,19 @@ class ElectromagneticEquations:
         gamma_v = self.Gamma(v)
         v_minus = v + half_dt_q_over_m * E / gamma_v        
         # Rotation
+        if np.linalg.norm(v_minus) > self.c:
+            x += v_minus * dt  # Update position with v_plus before returning
+            return x, v_minus  # Return position and v_plus
         gamma_v_minus = self.Gamma(v_minus)
-        t = half_dt_q_over_m * B / gamma_v_minus
-        s = 2.0 * t / (1.0 + np.sum(t**2))
-        v_prime = v_minus + np.cross(v_minus, t)
+        tt = half_dt_q_over_m * B / gamma_v_minus
+        s = 2.0 * tt / (1.0 + np.sum(tt**2))
+        v_prime = v_minus + np.cross(v_minus, tt)
         v_plus = v_minus + np.cross(v_prime, s)        
         # Half-acceleration
+        if np.linalg.norm(v_plus) > self.c:
+            x += v_plus * dt  # Update position with v_plus before returning
+            return x, v_plus  # Return position and v_plus
+        
         gamma_v_plus = self.Gamma(v_plus)
         v_new = v_plus + half_dt_q_over_m * E / gamma_v_plus        
         # Update position
@@ -249,6 +263,9 @@ class ElectromagneticEquations:
             # Symplectic integrator
             v = update_velocity(v, (electric_force(E) + magnetic_force(v, B)) / (m * self.Gamma(v)), 0.5 * dt)
             x = update_position(x, v, dt)
+            if np.linalg.norm(v) > self.c:
+                x += v * dt  # Update position with v_plus before returning
+                return x, v  # Return position and v_plus
             v = update_velocity(v, (electric_force(E) + magnetic_force(v, B)) / (m * self.Gamma(v)), 0.5 * dt)
         else:
             raise ValueError("Invalid integrator type. Choose 'hamiltonian' or 'symplectic'.")    
@@ -287,7 +304,6 @@ class ElectromagneticEquations:
         return r_new, v_new
 
     #########################################        
-
     def vay_algorithm(self, p):
         E = p.total_E_field  # Assume these fields are numpy arrays
         B = p.total_B_field
@@ -295,51 +311,24 @@ class ElectromagneticEquations:
         q = p.charge
         dt = p.dt
         x = p.position.copy()
-        v = p.velocity.copy()
-    
+        v = p.velocity.copy()    
         # Calculate the initial Lorentz factor gamma
-        gamma = self.Gamma(v)
-    
+        gamma = self.Gamma(v)    
         # Calculate the intermediate velocity v_prime
-        v_prime = v + (q * dt / (2.0 * m * gamma)) * (E + np.cross(v, B))
-        
+        v_prime = v + (q * dt / (2.0 * m * gamma)) * (E + np.cross(v, B))        
         # Calculate the Lorentz factor gamma_prime for the updated velocity v_prime
-        gamma_prime = self.Gamma(v_prime)
-        
+        if np.linalg.norm(v_prime) > self.c:
+                x += v_prime * dt  # Update position with v_plus before returning
+            
+                return x, v_prime  # Return position and v_plus
+        gamma_prime = self.Gamma(v_prime)        
         # Update the velocity using the magnetic field rotation step
-        t = (q * dt / (2.0 * m * gamma_prime)) * B
-        s = 2.0 * t / (1.0 + np.linalg.norm(t)**2)
-        v_new = v_prime + np.cross(v_prime + np.cross(v_prime, t), s)
-    
+        tt = (q * dt / (2.0 * m * gamma_prime)) * B
+        s = 2.0 * tt / (1.0 + np.linalg.norm(tt)**2)
+        v_new = v_prime + np.cross(v_prime + np.cross(v_prime, tt), s)    
         # Calculate the new position x_new using the average of the old and new velocities
-        x_new = x + dt * (v + v_new) / 2.0
-        
-        return x_new, v_new
-
-
-    def vay_algorithm1(self, p):
-        # use average velocity as the new velocity to maintain energy
-        E = p.total_E_field.copy()   
-        B = p.total_B_field.copy()
-        #t = p.dt
-        m = p.mass   
-        q = p.charge
-        x = p.position.copy()
-        v = p.velocity.copy()
-        dt = p.dt     
-        # Calculate the Lorentz factor gamma
-        gamma = self.Gamma(v)
-        # Calculate the intermediate velocity v_prime
-        v_prime = v + (q * dt / (2.0 * m * gamma)) * (E + np.cross(v, B))    
-        # Calculate the Lorentz factor gamma_prime
-        gamma_prime = self.Gamma(v_prime)# 1.0 / np.sqrt(1.0 - np.sum(v_prime**2) / self.c**2)    
-        # Calculate the new velocity v_new
-        t = (q * dt / (2.0 * m * gamma_prime)) * B
-        s = 2.0 * t / (1.0 + np.sum(t**2))
-        v_new = v_prime + np.cross(v_prime + np.cross(v_prime, t), s)    
-        # Calculate the new position x_new
-        x_new = x + (dt / 2.0) * (v + v_new)    
-        return x_new, v_new        
+        x_new = x + dt * (v + v_new) / 2.0        
+        return x_new, v_new  
         
     #########################################
     # ENERGY LOSS
@@ -434,14 +423,112 @@ class ElectromagneticEquations:
             v_new = np.array([0.0, 0.0, 0.0])
             KE_final= m * self.c ** 2
         #print(np.linalg.norm(v_new) ,   np.linalg.norm(v) , np.linalg.norm(v_new)-   np.linalg.norm(v)  )
-        return v_new, delta_E, KE_final         
+        return v_new, delta_E, KE_final                 
+       
+    #########################################     
+    # particles interaction vectorized
+    #########################################   
+    def calculate_retardation_vectorized(self,observer_position, particle_positions):       
+        r_vectors = particle_positions - observer_position                
+        distances = np.linalg.norm(r_vectors, axis=1)                
+        retarded_times = distances / self.c          
+        return r_vectors, retarded_times    
+        
+    #########################################   
+    def retarded_state_vectorized(self, particles, retarded_times):
+        # Ensure inputs are arrays for vectorized operations
+        if not isinstance(retarded_times, np.ndarray):
+            retarded_times = np.array(retarded_times)    
+        # Initialize arrays to hold the final states
+        num_particles = len(particles)
+        pos_final = np.zeros((num_particles, 3))  # Adjust 3 if position dimensionality differs
+        vel_final = np.zeros((num_particles, 3))
+        acc_final = np.zeros((num_particles, 3))    
+        # Loop to vectorize (minimal loop over particles still needed if data structure varies per particle)
+        for i, particle in enumerate(particles):
+            # Vectorized index finding
+            indices = np.searchsorted(particle.cumulative_times, retarded_times[i], side='right') - 1
+            indices = np.clip(indices, 0, None)  # Ensure indices are not negative    
+            # Retrieve states using indices
+            pos_final[i] = particle.pos_traj[indices] if indices < len(particle.pos_traj) else particle.pos_traj[-1]
+            vel_final[i] = particle.vel_traj[indices] if indices < len(particle.vel_traj) else particle.vel_traj[-1]
+            acc_final[i] = particle.acc_traj[indices] if indices < len(particle.acc_traj) else particle.acc_traj[-1]    
+        return pos_final, vel_final, acc_final 
         
     #########################################     
-    # particles interaction
+    def calculate_retarded_distances_vectorized(self, observer_position, retarded_positions):
+        r_retarded = observer_position - retarded_positions  # Broadcasting happens here
+        r_retarded_mag = np.linalg.norm(r_retarded, axis=1)  # Magnitudes along the last axis
+        r_retarded_unit = np.where(r_retarded_mag[:, np.newaxis] > 0, r_retarded / r_retarded_mag[:, np.newaxis], 0)
+        return r_retarded, r_retarded_mag, r_retarded_unit   
+        
+    #########################################           
+    def calculate_magnetic_field_vectorized(self, charges, r_retarded_mag, r_retarded_unit, retarded_velocities):
+        # Calculate the direction of the magnetic field using the cross product for each pair
+        B_dir = np.cross(r_retarded_unit, retarded_velocities)
+        B_dir_mag = np.linalg.norm(B_dir, axis=1, keepdims=True)
+        B_dir_unit = np.where(B_dir_mag > 0, B_dir / B_dir_mag, 0)  # Normalize only non-zero magnitudes    
+        # Compute the magnetic field magnitude using the Biot-Savart Law vectorized
+        norm_product = np.linalg.norm(retarded_velocities, axis=1) * np.linalg.norm(r_retarded_unit, axis=1)
+        cos_theta = np.einsum('ij,ij->i', r_retarded_unit, retarded_velocities) / norm_product
+        sin_theta = np.sqrt(1 - cos_theta**2)
+        B_mag = (self.MU_0 / (4 * np.pi)) * (charges * np.linalg.norm(retarded_velocities, axis=1) * sin_theta) / (r_retarded_mag ** 2)    
+        return B_mag[:, None] * B_dir_unit    
+        
     #########################################   
+    def calculate_electric_field_vectorized(self, charges, r_retarded, r_retarded_mag, r_retarded_unit, retarded_velocities, retarded_accs):
+        beta = retarded_velocities / self.c
+        gamma_ret = self.Gamma_vec(beta)
+        one_minus_beta_dot_r = 1 - np.einsum('ij,ij->i', beta, r_retarded_unit)    
+        # Correcting common_factor shape: (n, 1) for proper broadcasting
+        common_factor = (charges / (4 * np.pi * self.EPSILON_0 * r_retarded_mag**2))[:, None]  # Ensure it's (n, 1)    
+        velocity_term = (r_retarded_unit - beta) / (gamma_ret[:, None]**2 * one_minus_beta_dot_r[:, None]**3)
+        acc_term = np.cross(r_retarded_unit, np.cross(r_retarded_unit - beta, retarded_accs / self.c)) / (self.c * one_minus_beta_dot_r[:, None]**3)
+        return common_factor * (velocity_term + acc_term)    
+
+    #########################################    
+    # Interaction non-vectorized
+    #########################################         
+    def calculate_retardation(self,self_p, particle):
+        r = self_p.position - particle.position 
+        retarded_time = np.linalg.norm(r) / self.c
+        return r, retarded_time    
+        
+    def retarded_state(self, particles, retarded_time):
+        def find_closest_index(cumulative_times, target_time):
+            idx = np.searchsorted(cumulative_times, target_time, side='right') - 1
+            return max(0, idx)  # Ensure the index is not negative    
+        def retrieve_state(particle, index):
+            # Safeguard against index out of bounds
+            if index < len(particle.pos_traj):
+                return particle.pos_traj[index], particle.vel_traj[index], particle.acc_traj[index]
+            return particle.pos_traj[-1], particle.vel_traj[-1], particle.acc_traj[-1]    
+        # Convert to list if a single particle is passed
+        if not isinstance(particles, list):
+            particles = [particles]        
+        # Assuming cumulative_times are maintained as part of particle updates
+        retarded_states = []
+        for particle in particles:
+            index = find_closest_index(particle.cumulative_times, retarded_time)
+            state = retrieve_state(particle, index)
+            retarded_states.append(state)    
+        # Return a list of states or a single state depending on the input
+        return retarded_states if len(retarded_states) > 1 else retarded_states[0]
+    
+    def calculate_retarded_distance(self, particle, retarded_position):
+        r_retarded = particle.position - retarded_position
+        r_retarded_mag = np.linalg.norm(r_retarded)
+        if r_retarded_mag > 0:
+            r_retarded_unit = r_retarded / r_retarded_mag
+        else:
+            r_retarded_unit = np.zeros_like(r_retarded)
+        return r_retarded, r_retarded_mag, r_retarded_unit    
+        
+    #########################################           
     def calculate_electric_field(self, particle, r_retarded, r_retarded_mag, r_retarded_unit, retarded_velocity, retarded_acc):
         # Calculate beta and gamma for the retarded velocity
-        beta = retarded_velocity / self.c
+        beta = retarded_velocity/ self.c
+        #beta = limit_speed(beta)
         gamma_ret = self.Gamma(beta)
         one_minus_beta_dot_r = 1 - np.dot(beta, r_retarded_unit)        
         # Precompute common factors used in the field calculation
@@ -450,8 +537,8 @@ class ElectromagneticEquations:
         acc_term = np.cross(r_retarded_unit, np.cross((r_retarded_unit - beta), retarded_acc / self.c)) / (self.c * one_minus_beta_dot_r ** 3)        
         # Combine the velocity and acceleration terms
         return common_factor * (velocity_term + acc_term)
-
-    #########################################            
+        
+    #########################################   
     def calculate_magnetic_field(self, particle, r_retarded_mag, r_retarded_unit, retarded_velocity):
         # Calculate the direction of the magnetic field using the cross product
         B_dir = np.cross(r_retarded_unit, retarded_velocity)
@@ -467,62 +554,7 @@ class ElectromagneticEquations:
             theta = 0        
         B_mag = (self.MU_0 / (4 * np.pi)) * (particle.charge * np.linalg.norm(retarded_velocity) * np.sin(theta)) / (r_retarded_mag ** 2)        
         # Return the magnetic field vector
-        return B_mag * B_dir_unit
-        
-    #########################################    
-    def calculate_retardation(self,self_p, particle):
-        r = self_p.position - particle.position 
-        retarded_time = np.linalg.norm(r) / self.c
-        return r, retarded_time
-        
-    #########################################    
-
-    def retarded_state(self, particles, retarded_time):        
-        def prepare_cumulative_times(particle):
-            particle.cumulative_times = np.cumsum(particle.dt_traj)    
-        def find_closest_index(cumulative_times, target_time):
-            idx = np.searchsorted(cumulative_times, target_time, side='right')
-
-            #idx = np.searchsorted(cumulative_times, target_time)
-            return idx - 1 if idx > 0 else 0    
-        def retrieve_state(particle, index):
-            if index < len(particle.pos_traj):
-                return particle.pos_traj[index], particle.vel_traj[index], particle.acc_traj[index]
-            return particle.pos_traj[-1], particle.vel_traj[-1], particle.acc_traj[-1]    
-        if not isinstance(particles, list):  # If the input is a single particle, make it a list
-            particles = [particles]        
-        # Prepare cumulative times for each particle
-        for particle in particles:
-            prepare_cumulative_times(particle)    
-        # Calculate the retarded states for each particle
-        retarded_states = []
-        for particle in particles:
-            index = find_closest_index(particle.cumulative_times, retarded_time)
-            state = retrieve_state(particle, index)
-            retarded_states.append(state)    
-        return retarded_states if len(retarded_states) > 1 else retarded_states[0]
-
-
-    #########################################
-    def calculate_retarded_distance(self, particle, retarded_position):
-        """
-        Calculate the vector difference, magnitude, and unit vector from 
-        self.position to retarded_position.
-    
-        Parameters:
-        - retarded_position: numpy array representing the retarded position.    
-        Returns:
-        - r_retarded: Vector difference from retarded_position to self.position.
-        - r_retarded_mag: Magnitude of the vector difference.
-        - r_retarded_unit: Unit vector in the direction from retarded_position to self.position.
-        """
-        r_retarded = particle.position - retarded_position
-        r_retarded_mag = np.linalg.norm(r_retarded)
-        if r_retarded_mag > 0:
-            r_retarded_unit = r_retarded / r_retarded_mag
-        else:
-            r_retarded_unit = np.zeros_like(r_retarded)
-        return r_retarded, r_retarded_mag, r_retarded_unit    
+        return B_mag * B_dir_unit           
         
     #########################################         
     # Lorentz transformation
@@ -550,10 +582,20 @@ class ElectromagneticEquations:
     #########################################
     # Gamma speed limit
     #########################################
-    def Gamma(self, velocities):
+    def Gamma_vec(self, velocities):
         velocities = np.array(velocities)
         if velocities.ndim == 1:
-            velocities = velocities[np.newaxis, :]      
+            velocities = velocities[np.newaxis, :]  # Ensure velocities is always 2D
+        v_squared = np.sum(velocities**2, axis=1) / self.c**2
+        gammas = 1 / np.sqrt(1 - v_squared)
+        return gammas  # Always return an ndarray
+        
+    #########################################   
+    def Gamma(self, velocities):
+         
+        velocities = np.array(velocities)
+        if velocities.ndim == 1:
+            velocities = velocities[np.newaxis, :]                                                     
         v_squared = np.sum(velocities**2, axis=1) / self.c**2    
         gammas = 1 / np.sqrt(1 - v_squared)
         return gammas if gammas.size > 1 else gammas.item()  
