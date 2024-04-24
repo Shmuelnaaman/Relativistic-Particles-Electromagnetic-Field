@@ -193,7 +193,7 @@ class ElectromagneticEquations:
         # Check if the updated velocity exceeds the speed of light
         if np.linalg.norm(v_plus) > self.c:
             position += v_plus * dt  # Update position with v_plus before returning
-            print('b')
+            #print('b')
             return position, v_plus  # Return position and v_plus
             
         # Second half-step velocity update due to the electric field
@@ -318,8 +318,7 @@ class ElectromagneticEquations:
         v_prime = v + (q * dt / (2.0 * m * gamma)) * (E + np.cross(v, B))        
         # Calculate the Lorentz factor gamma_prime for the updated velocity v_prime
         if np.linalg.norm(v_prime) > self.c:
-                x += v_prime * dt  # Update position with v_plus before returning
-            
+                x += v_prime * dt  # Update position with v_plus before returning            
                 return x, v_prime  # Return position and v_plus
         gamma_prime = self.Gamma(v_prime)        
         # Update the velocity using the magnetic field rotation step
@@ -456,14 +455,49 @@ class ElectromagneticEquations:
         return pos_final, vel_final, acc_final 
         
     #########################################     
-    def calculate_retarded_distances_vectorized(self, observer_position, retarded_positions):
+    def calculate_retarded_distances_vectorized1(self, observer_position, retarded_positions):
         r_retarded = observer_position - retarded_positions  # Broadcasting happens here
         r_retarded_mag = np.linalg.norm(r_retarded, axis=1)  # Magnitudes along the last axis
         r_retarded_unit = np.where(r_retarded_mag[:, np.newaxis] > 0, r_retarded / r_retarded_mag[:, np.newaxis], 0)
         return r_retarded, r_retarded_mag, r_retarded_unit   
+    def calculate_retarded_distances_vectorized(self, observer_position, retarded_positions):
+        r_retarded = observer_position - retarded_positions        
+        r_retarded_mag = np.linalg.norm(r_retarded, axis=1)        
+        zero_distance_mask = (r_retarded_mag == 0)    
+        r_retarded_unit = np.zeros_like(r_retarded)    
+        non_zero_distances = ~zero_distance_mask
+        r_retarded_unit[non_zero_distances] = r_retarded[non_zero_distances] / r_retarded_mag[non_zero_distances, np.newaxis]    
+        return r_retarded, r_retarded_mag, r_retarded_unit
         
-    #########################################           
+    #########################################
+
+ 
+
     def calculate_magnetic_field_vectorized(self, charges, r_retarded_mag, r_retarded_unit, retarded_velocities):
+        # Calculate the direction of the magnetic field using the cross product for each pair
+        B_dir = np.cross(r_retarded_unit, retarded_velocities)
+        B_dir_mag = np.linalg.norm(B_dir, axis=1, keepdims=True)
+    
+        # Initialize B_dir_unit safely
+        B_dir_unit = np.zeros_like(B_dir)
+    
+        # Only perform division where B_dir_mag is greater than zero
+        safe_indices = B_dir_mag[:, 0] > 0  # Since B_dir_mag is kept in dimensions with 'keepdims=True'
+        B_dir_unit[safe_indices] = B_dir[safe_indices] / B_dir_mag[safe_indices]
+    
+        # Compute the magnetic field magnitude using the Biot-Savart Law vectorized
+        norm_product = np.linalg.norm(retarded_velocities, axis=1) * np.linalg.norm(r_retarded_unit, axis=1) + np.finfo(float).eps
+        cos_theta = np.einsum('ij,ij->i', r_retarded_unit, retarded_velocities) / norm_product
+        cos_theta = np.clip(cos_theta, -1, 1)  # Ensuring cos_theta is within the valid range for sqrt
+        sin_theta = np.sqrt(np.clip(1 - cos_theta**2, 0, 1))
+    
+        B_mag = (self.MU_0 / (4 * np.pi)) * (charges * np.linalg.norm(retarded_velocities, axis=1) * sin_theta) / (r_retarded_mag ** 2 + np.finfo(float).eps)
+        return B_mag[:, None] * B_dir_unit
+
+
+
+    
+    def calculate_magnetic_field_vectorized1(self, charges, r_retarded_mag, r_retarded_unit, retarded_velocities):
         # Calculate the direction of the magnetic field using the cross product for each pair
         B_dir = np.cross(r_retarded_unit, retarded_velocities)
         B_dir_mag = np.linalg.norm(B_dir, axis=1, keepdims=True)
@@ -471,12 +505,32 @@ class ElectromagneticEquations:
         # Compute the magnetic field magnitude using the Biot-Savart Law vectorized
         norm_product = np.linalg.norm(retarded_velocities, axis=1) * np.linalg.norm(r_retarded_unit, axis=1)
         cos_theta = np.einsum('ij,ij->i', r_retarded_unit, retarded_velocities) / norm_product
-        sin_theta = np.sqrt(1 - cos_theta**2)
+        #sin_theta = np.sqrt(1 - cos_theta**2)
+        sin_theta = np.sqrt(np.clip(1 - cos_theta**2, 0, 1))
+
         B_mag = (self.MU_0 / (4 * np.pi)) * (charges * np.linalg.norm(retarded_velocities, axis=1) * sin_theta) / (r_retarded_mag ** 2)    
         return B_mag[:, None] * B_dir_unit    
         
-    #########################################   
+    #########################################
     def calculate_electric_field_vectorized(self, charges, r_retarded, r_retarded_mag, r_retarded_unit, retarded_velocities, retarded_accs):
+        epsilon = np.finfo(float).eps  # Small constant to prevent division by zero        
+        # Normalize retarded velocities
+        beta = retarded_velocities / self.c
+        gamma_ret = self.Gamma_vec(beta)
+        one_minus_beta_dot_r = 1 - np.einsum('ij,ij->i', beta, r_retarded_unit)        
+        # Use epsilon to avoid divide by zero in r_retarded_mag and one_minus_beta_dot_r
+        r_retarded_mag_safe = r_retarded_mag + epsilon
+        one_minus_beta_dot_r_safe = one_minus_beta_dot_r + epsilon        
+        # Calculate common_factor, using epsilon to ensure no division by zero
+        common_factor = (charges / (4 * np.pi * self.EPSILON_0 * r_retarded_mag_safe**2))[:, None]  # Ensure it's (n, 1)        
+        # Calculate velocity and acceleration terms safely
+        velocity_term = (r_retarded_unit - beta) / (gamma_ret[:, None]**2 * one_minus_beta_dot_r_safe[:, None]**3)
+        acc_term = np.cross(r_retarded_unit, np.cross(r_retarded_unit - beta, retarded_accs / self.c)) / (self.c * one_minus_beta_dot_r_safe[:, None]**3)       
+        # Combine terms safely
+        electric_field = common_factor * (velocity_term + acc_term)        
+        return electric_field
+
+    def calculate_electric_field_vectorized1(self, charges, r_retarded, r_retarded_mag, r_retarded_unit, retarded_velocities, retarded_accs):
         beta = retarded_velocities / self.c
         gamma_ret = self.Gamma_vec(beta)
         one_minus_beta_dot_r = 1 - np.einsum('ij,ij->i', beta, r_retarded_unit)    
@@ -534,7 +588,8 @@ class ElectromagneticEquations:
         # Precompute common factors used in the field calculation
         common_factor = particle.charge / (4 * np.pi * self.EPSILON_0 * (r_retarded_mag ** 2))
         velocity_term = (r_retarded_unit - beta) / (gamma_ret **2 * one_minus_beta_dot_r ** 3)
-        acc_term = np.cross(r_retarded_unit, np.cross((r_retarded_unit - beta), retarded_acc / self.c)) / (self.c * one_minus_beta_dot_r ** 3)        
+        acc_term = np.cross(r_retarded_unit, np.cross((r_retarded_unit - beta),
+                                                      retarded_acc / self.c)) / (self.c * one_minus_beta_dot_r ** 3)        
         # Combine the velocity and acceleration terms
         return common_factor * (velocity_term + acc_term)
         
@@ -591,8 +646,7 @@ class ElectromagneticEquations:
         return gammas  # Always return an ndarray
         
     #########################################   
-    def Gamma(self, velocities):
-         
+    def Gamma(self, velocities):         
         velocities = np.array(velocities)
         if velocities.ndim == 1:
             velocities = velocities[np.newaxis, :]                                                     

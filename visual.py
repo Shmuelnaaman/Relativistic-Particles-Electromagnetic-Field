@@ -4,6 +4,8 @@ from physics import ElectromagneticEquations
 import PySimpleGUI as sg
 import time 
 import random
+import math
+
 class VisualizationManager:
     def __init__(self, width, height, GRID_SPACING, num_particle, particle_manager, zoom_factor=1):
         self.WIDTH, self.HEIGHT = width, height
@@ -33,101 +35,32 @@ class VisualizationManager:
         self.electric_field_surface = pygame.Surface((self.WIDTH, self.HEIGHT), pygame.SRCALPHA)  
 
 #############################################################################################
-    def run_simulation(self, mass_mults, charge_mult, e_initial_velocity, p_initial_velocity,
-                       ERROR_THRESHOLD, dt, B, Q_F, electric_field, magnetic_field):
+    def run_simulation(self, mass_mults, charge_mult, e_initial_velocity, p_initial_velocity, dt, B_m, E_m, electric_field, magnetic_field):
       
         # Setup the simulation GUI with necessary parameters
-        self.setup_simulation_gui(B,mass_mults)        
+        self.setup_simulation_gui(B_m,mass_mults)        
         # Assign parameters to instance variables
         self.mass_mults= mass_mults
         self.mass_mults_sim =mass_mults
         self.charge_mult = charge_mult
         self.e_initial_velocity, self.p_initial_velocity = e_initial_velocity, p_initial_velocity
-        self.dt, self.B, self.Q_F = dt, B, Q_F
+        self.dt, self.B_m, self.E_m = dt, B_m, E_m
         self.electric_field, self.magnetic_field = electric_field, magnetic_field
         self.allow_creation = True        
         # Define available simulation methods
-        self.method_names = [("boris_push", 'B'), 
-                             ('analytic_rel', 'AR'),("vay_algorithm", 'VA'), 
-                             ("rk4_step", 'L4'),("rk6_step", 'L6'), 
-                             ("relativ_intgrtr", 'R'),("vay_push", 'VP'), 
-                             ("Hamiltonian", 'H') ]  
+        self.method_names = [("boris_push", 'B'), ('analytic_rel', 'AR') , 
+                             ("rk4_step", 'L4'),("rk6_step", 'L6'), ("relativ_intgrtr", 'R'),
+                             ("vay_push", 'VP'), ("Hamiltonian", 'H') ,("vay_algorithm", 'VA')]  
         # Initialize simulation with the first particle
         self.add_initial_particle()        
         # Execute the main simulation loop
         self.run_main_loop()        
         # Cleanup resources and exit the simulation properly
         self.shutdown_simulation() 
-    
-    def run_main_loop(self):
-        timeout = 10
-        counter = 0
-        running = True
-        while running:
-            start_time = time.time()
-            event, values = self.window.read(timeout=0)
-            if event == sg.WINDOW_CLOSED:
-                running = False  # Set running to False to close both windows 
-            if event == 'update_simulation':
-                self.update_simulation_parameters(values)                 
-            if event == 'keep_one_particle':
-                self.keep_one_particle()            
-            # Pygame event handling
-            pygame_running, counter = self.handle_pygame_events(counter)     
-            running = running and pygame_running  # Combine states
-            if not running:
-                break
-            # Particle management mass_mults_sim
-            self.particle_manager.update(self.electric_field, self.magnetic_field,
-                                         self.Q_F_sim, self.B_sim, self.mass_mults_sim, self.zoom_factor)
-            self.remove_escaping_particles()            
-            # Visualization            
-            counter = self.visualize(self.electric_field, self.magnetic_field, self.Q_F_sim, self.B_sim, counter)            
-            # Check if timeout exceeded
-            if time.time() - start_time > timeout:
-                break            
-            # Maintain desired frame rate
-            self.clock.tick(240) 
-    
-    def visualize(self, electric_field, magnetic_field, Q_F, B, counter, initial_zoom=1.0):
-        num_particles = len(self.particle_manager.particles)
-        self.screen.fill((0, 0, 0))
-        self.electric_field_surface.fill((0, 0, 0, 0))    
-        Z = np.zeros_like(self.x_in)    
-        # Stack X, Y, and Z to form a 3D array where each position vector is (x, y, z)
-        positions = np.dstack((self.x_in, self.y_in, Z))
-        #print(f"Type and value of x_in: {type(self.x_in)}, {self.x_in}")
-        #print(f"Type and value of y_in: {type(self.y_in)}, {self.y_in}")
-        E_field = electric_field(positions, Q_F)
-        B_field = magnetic_field(positions, B)
-        E_transformed, B_transformed = self.transform_fields(E_field, B_field, counter, num_particles)    
-        self.draw_arrows(E_transformed, B_transformed)
-        #print(counter , num_particles, counter , num_particles)
-        self.draw(self.particle_manager.particles, self.screen, counter % num_particles)
-        self.draw_particle_info(counter, num_particles)    
-        self.screen.blit(self.electric_field_surface, (0, 0))
-        pygame.display.flip()
-        return counter       
-#############################################################################################      
-    def setup_simulation_gui(self, B, mass_mults):
-        layout = [
-            [sg.Text('Magnetic Field'), sg.Slider(range=(-4000, 4000), orientation='h', 
-                                                  key='Magnetic Field', default_value=B, resolution=0.001)],
-            [sg.Text('Electric Field'), sg.Slider(range=(-3000, 3000), orientation='h', 
-                                                  key='Electric Field', default_value=0.00, resolution=0.001)],
-            [sg.Text('Mass Factor'), sg.Slider(range=(1, 2e3), orientation='h', 
-                                               key='Mass Factor', default_value=mass_mults, resolution=1)],
-            [sg.Checkbox('Particle Creation', key='allow_creation', default=True)],
-            [sg.Button('Update Simulation', key='update_simulation'),
-             sg.Button('Keep One Particle', key='keep_one_particle')],
-        ]
-        self.window = sg.Window('Simulation Controls', layout)
-        _, values = self.window.read(timeout=10)
-        self.update_simulation_parameters(values)
-
+        
     def update_simulation_parameters(self, values):
-        self.B_sim = values['Magnetic Field']
-        self.Q_F_sim = values['Electric Field']
+        self.B_m_sim = values['Magnetic Field']
+        self.E_m_sim = values['Electric Field']
         self.mass_mults_sim = values['Mass Factor']
         self.allow_creation = values['allow_creation']      
 
@@ -141,9 +74,24 @@ class VisualizationManager:
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # Left mouse button
                     counter = self.handle_mousebuttondown_event( counter, num_particles )
-        return True, counter  
-
-
+        return True, counter      
+        
+    def setup_simulation_gui(self, B_m, mass_mults):
+        layout = [
+            [sg.Text('Magnetic Field'), sg.Slider(range=(-4000, 4000), orientation='h', 
+                                                  key='Magnetic Field', default_value=B_m, resolution=0.001)],
+            [sg.Text('Electric Field'), sg.Slider(range=(-3000, 3000), orientation='h', 
+                                                  key='Electric Field', default_value=0.00, resolution=0.001)],
+            [sg.Text('Mass Factor'), sg.Slider(range=(1, 2e3), orientation='h', 
+                                               key='Mass Factor', default_value=mass_mults, resolution=1)],
+            [sg.Checkbox('Particle Creation', key='allow_creation', default=True)],
+            [sg.Button('Update Simulation', key='update_simulation'),
+             sg.Button('Keep One Particle', key='keep_one_particle')],
+        ]
+        self.window = sg.Window('Simulation Controls', layout)
+        _, values = self.window.read(timeout=10)
+        self.update_simulation_parameters(values)    
+        
     def handle_mousebuttondown_event(self, counter, num_particles):
         mouse_x, mouse_y = pygame.mouse.get_pos()
         zoom_x, zoom_y = self.zoom_center
@@ -179,45 +127,63 @@ class VisualizationManager:
             print(f'Particle added, method: {method_name}')        
         counter += 1
         return counter
-
-
+        
+    def run_main_loop(self):
+        timeout = 10
+        counter = 0
+        running = True
+        while running:
+            start_time = time.time()
+            event, values = self.window.read(timeout=0)
+            if event == sg.WINDOW_CLOSED:
+                running = False  # Set running to False to close both windows 
+            if event == 'update_simulation':
+                self.update_simulation_parameters(values)                 
+            if event == 'keep_one_particle':
+                self.keep_one_particle()            
+            # Pygame event handling
+            pygame_running, counter = self.handle_pygame_events(counter)     
+            running = running and pygame_running  # Combine states
+            if not running:
+                break
+            # Particle management mass_mults_sim
+            self.particle_manager.update(self.electric_field, self.magnetic_field,
+                                         self.E_m_sim, self.B_m_sim, self.mass_mults_sim, self.zoom_factor)
+            self.remove_escaping_particles()            
+            # Visualization            
+            counter = self.visualize(self.electric_field, self.magnetic_field, self.E_m_sim, self.B_m_sim, counter)            
+            # Check if timeout exceeded
+            if time.time() - start_time > timeout:
+                break            
+            # Maintain desired frame rate
+            self.clock.tick(240) 
     
-    def handle_mousebuttondown_event1(self, counter, num_particles):
-        mouse_x, mouse_y = pygame.mouse.get_pos()
-        zoom_x, zoom_y = self.zoom_center
-        x = zoom_x + (mouse_x - zoom_x) / self.zoom_factor
-        y = zoom_y + (mouse_y - zoom_y) / self.zoom_factor        
-        if num_particles < self.num_particle and self.allow_creation:
-            # Get the velocity_method of all existing particles
-            used_methods = [particle.velocity_method for particle in self.particle_manager.particles]  
-            # Count the usage of each method
-            method_usage = {}
-            for method in used_methods:
-                method_name = method.__name__
-                if method_name in method_usage:
-                    method_usage[method_name] += 1
-                else:
-                    method_usage[method_name] = 1            
-            # Sort the available methods by their usage count (prefer less used methods)
-            sorted_methods = sorted(self.method_names, key=lambda method: method_usage.get(method[0], 0)) 
-            # Choose the least used method
-            method_name,  letter = sorted_methods[0]
-            push_method = getattr(self.em_equations, method_name)            
-            self.particle_manager.add_particle(
-                np.array([x, y, 0.0]),
-                np.array(self.e_initial_velocity),
-                self.charge_mult * self.e_charge,
-                self.mass_mults * self.e_mass,
-                self.dt,
-                self.em_equations.Lorentz, # Lorentz, Landau_Lifshitz
-                self.em_equations.radiation_reaction,
-                push_method, 
-                self.electric_field,
-                self.magnetic_field, 
-                letter            )
-            print(f'Particle added, method: {method_name}')        
-        counter += 1
-        return counter
+    def visualize(self, electric_field, magnetic_field, E_m, B_m, counter, initial_zoom=1.0):
+        num_particles = len(self.particle_manager.particles)
+        self.screen.fill((0, 0, 0))
+        self.electric_field_surface.fill((0, 0, 0, 0))    
+        Z = np.zeros_like(self.x_in)    
+        # Stack X, Y, and Z to form a 3D array where each position vector is (x, y, z)
+        positions = np.dstack((self.x_in, self.y_in, Z))
+        #print(f"Type and value of x_in: {type(self.x_in)}, {self.x_in}")
+        #print(f"Type and value of y_in: {type(self.y_in)}, {self.y_in}")
+        E_field = electric_field(positions, E_m)
+        B_field = magnetic_field(positions, B_m)
+        E_transformed, B_transformed = self.transform_fields(E_field, B_field, counter, num_particles)    
+        self.draw_arrows(E_transformed, B_transformed)
+        #print(counter , num_particles, counter , num_particles)
+        self.draw(self.particle_manager.particles, self.screen, counter % num_particles)
+        self.draw_particle_info(counter, num_particles)    
+        self.screen.blit(self.electric_field_surface, (0, 0))
+        pygame.display.flip()
+        return counter       
+#############################################################################################      
+ 
+
+ 
+
+
+
         
     def handle_mousewheel_event(self, event):
         mouse_screen_x, mouse_screen_y = pygame.mouse.get_pos()    
@@ -227,7 +193,8 @@ class VisualizationManager:
         # Convert screen coordinates to world coordinates using the current zoom center and factor
         world_x, world_y = self.screen_to_world(mouse_screen_x, mouse_screen_y, self.zoom_center, self.zoom_factor)        
         # Update the zoom factor
-        self.zoom_factor = new_zoom_factor        
+        self.zoom_factor = new_zoom_factor  
+        #print('zoom_factor', self.zoom_factor)
         # Convert the world coordinates back to screen coordinates using the new zoom factor
         new_mouse_screen_x, new_mouse_screen_y = self.world_to_screen(world_x, world_y, self.zoom_center, self.zoom_factor)        
         # Calculate the difference between where the mouse was and where the point has moved on screen
@@ -236,7 +203,8 @@ class VisualizationManager:
         # Shift the zoom center by the difference to keep the particle under the mouse stationary
         self.zoom_center[0] += screen_dx
         self.zoom_center[1] += screen_dy               
-#############################################################################################              
+#############################################################################################   
+    
     def add_initial_particle(self):
         self.particle_manager.add_particle(
             np.array([400.0, 301.0, 0.0]),
@@ -269,8 +237,7 @@ class VisualizationManager:
             if valid:
                 new_particle_list.append(particle)
             else:
-                print(f"Removing particle: {particle.letter}")  # Printing the name of the particle being removed    
-        # Update the particle list
+                print(f"Removing particle: {particle.letter}")           
         self.particle_manager.particles = new_particle_list     
 
 #############################################################################################  
@@ -418,7 +385,11 @@ class VisualizationManager:
             log_max_value = np.log10(max_value + self.epsilon)
             filled_height = int(bar_height * log_value / log_max_value)
         else:
-            filled_height = int(bar_height * (value / max_value))
+            if math.isnan(value) or math.isnan(max_value) or max_value == 0:
+                filled_height = 0  # Default to zero or some other appropriate error handling
+            else:
+                filled_height = int(bar_height * (value / max_value))
+        
         pygame.draw.circle(self.screen, (250,250,250), (self.WIDTH//2, self.HEIGHT//2), 1)     
         pygame.draw.rect(screen, (255, 255, 255), (bar_x, bar_y, bar_width, bar_height), 1)
         pygame.draw.rect(screen, color, (bar_x, bar_y + bar_height - filled_height, bar_width, filled_height))
