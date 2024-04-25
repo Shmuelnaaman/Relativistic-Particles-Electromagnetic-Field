@@ -1,8 +1,6 @@
 import numpy as np
-import copy    
-    
-class ElectromagneticEquations:
-                            
+import copy        
+class ElectromagneticEquations:                            
     def __init__(self, c = 299792458):
         self.c = c
         self.EPSILON_0 = 8.8541878128e-12 
@@ -10,18 +8,14 @@ class ElectromagneticEquations:
         self.MU_0 = 4* np.pi * 10**-7    #= 4 * np.pi * 10**-7    
         self.ELEMENTARY_CHARGE = 1.602176634*1e-19
         self.e_mass = 9.10*1e-31  
-        self.p_mass = 1.67*1e-27  
-         
+        self.p_mass = 1.67*1e-27           
         self.k =8.9875517873681764e9
     #########################################
     # FORCE
     #########################################
     def Lorentz(self, particle, position, v):
         v = particle.velocity.copy()
-        #adding the speed limit here cause error
-        #v = self.limit_speed(particle.velocity)  # Ensure velocity doesn't exceed c or a set limit
         gamma = self.Gamma(v)  # Calculate the relativistic gamma factor
-        # Calculate the acceleration from the Lorentz force      
         magnitude =(particle.charge / (gamma * particle.mass)) 
         acceleration  = magnitude* (particle.total_E_field + np.cross(v, particle.total_B_field))
         return acceleration
@@ -33,17 +27,13 @@ class ElectromagneticEquations:
         B = particle.total_B_field.copy()
         q = particle.charge
         m = particle.mass
-        #The speed limit was causing issue in the Lorentz so I removed it here too
-        #v = self.limit_speed(v)
         g = self.Gamma(v)         
         if np.allclose(v, 0):
             # Handle the case when v is zero
-            # You can choose an appropriate fallback value or behavior
             v_norm = np.zeros_like(v)
             return (q / m) * E
         else:
             v_norm = v / np.linalg.norm(v)
-            #print(np.dot(E, v_norm) * v, np.linalg.norm(E), np.linalg.norm(v))
             Landau_Lifshitz = (q / (g * m)) * (E + np.cross(v, B) / g - (q / (g * m * self.c**2)) * np.dot(E, v) * v)
             rad_const = (q**3 / (6 * np.pi * m**2 * self.c**3))            
             Landau_rad = (-(g**2 / self.c**2) * np.dot(E, E) * v + (q / m) * np.cross(E, B) + (q / (m * self.c**2)) * np.dot(E, v) * B   ) 
@@ -60,7 +50,6 @@ class ElectromagneticEquations:
         gamma = particle.gamma  # Assuming gamma is pre-calculated
         E = particle.total_E_field.copy() 
         B = particle.total_B_field.copy()         
-        # Lorentz force component        
         lorentz_force = q * (E + np.cross(v, B))
         # Simplified radiation reaction component
         # This simplification assumes a proportional damping force opposing the velocity
@@ -115,25 +104,21 @@ class ElectromagneticEquations:
 
     #########################################       
     def analytic_rel(self, p):
-        """
-        Calculates the position and velocity of a relativistic charged particle in a uniform magnetic field
-        at a given time, using numpy arrays for position and velocity. 
-        """
+        # Analytic solution considering relativistic velocities
         B = p.total_B_field.copy()
         dt = p.dt
         m = p.mass  
         q = -p.charge
         vel = p.velocity.copy()
         pos = p.position.copy()
-        c = self.c #299792458  # Speed of light in meters per second    
+        c = self.c 
         def rotate_vector(vector, axis, angle):
-            """Helper function to create a rotation matrix from an axis and angle (Rodrigues' rotation formula). """
             K = np.array([[0, -axis[2], axis[1]], 
                           [axis[2], 0, -axis[0]], 
                           [-axis[1], axis[0], 0]])
             rotation_matrix = np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * (K @ K)
             return rotation_matrix @ vector    
-        gamma = self.Gamma(vel) #1 / np.sqrt(1 - np.linalg.norm(vel)**2 / c**2)
+        gamma = self.Gamma(vel) 
         omega = q * np.linalg.norm(B) / (gamma * m)
         B_unit = B / np.linalg.norm(B)    
         vel_parallel = np.dot(vel, B_unit) * B_unit
@@ -146,10 +131,7 @@ class ElectromagneticEquations:
         
     #########################################              
     def analytic(self, p):
-        """
-        Calculates the position and velocity of a charged particle in a uniform magnetic field
-        at a given time, using numpy arrays for position and velocity. 
-        """        
+        # Analytic solution considering classic velocities        
         B = p.total_B_field.copy()
         dt = p.dt
         m = p.mass  
@@ -182,7 +164,6 @@ class ElectromagneticEquations:
         q = p.charge
         position = p.position.copy()
         velocity = p.velocity.copy()    
-        # Calculate initial gamma
         gamma = self.Gamma(velocity)    
         # Half-step velocity update due to electric field
         v_minus = velocity + (q / m) * E * (dt / 2.0) / gamma    
@@ -193,14 +174,11 @@ class ElectromagneticEquations:
         v_plus = v_minus + np.cross(v_prime, s)    
         # Check if the updated velocity exceeds the speed of light
         if np.linalg.norm(v_plus) > self.c:
-            position += v_plus * dt  # Update position with v_plus before returning
-            #print('b')
-            return position, v_plus  # Return position and v_plus
-            
+            position += v_plus * dt  
+            return position, v_plus  
         # Second half-step velocity update due to the electric field
         gamma = self.Gamma(v_plus)
         velocity = v_plus + (q / m) * E * (dt / 2.0) / gamma    
-        # Update position
         position += velocity * dt    
         return position, velocity
         
@@ -214,26 +192,21 @@ class ElectromagneticEquations:
         v = p.velocity.copy()
         dt = p.dt
         half_dt_q_over_m = q * dt / (2.0 * m)        
-        # Half-acceleration           
         gamma_v = self.Gamma(v)
         v_minus = v + half_dt_q_over_m * E / gamma_v        
-        # Rotation
         if np.linalg.norm(v_minus) > self.c:
-            x += v_minus * dt  # Update position with v_plus before returning
+            x += v_minus * dt  
             return x, v_minus  # Return position and v_plus
         gamma_v_minus = self.Gamma(v_minus)
         tt = half_dt_q_over_m * B / gamma_v_minus
         s = 2.0 * tt / (1.0 + np.sum(tt**2))
         v_prime = v_minus + np.cross(v_minus, tt)
         v_plus = v_minus + np.cross(v_prime, s)        
-        # Half-acceleration
         if np.linalg.norm(v_plus) > self.c:
-            x += v_plus * dt  # Update position with v_plus before returning
-            return x, v_plus  # Return position and v_plus
-        
+            x += v_plus * dt  
+            return x, v_plus  # Return position and v_plus        
         gamma_v_plus = self.Gamma(v_plus)
         v_new = v_plus + half_dt_q_over_m * E / gamma_v_plus        
-        # Update position
         x_new = x + v_new * dt        
         return x_new, v_new
         
@@ -265,8 +238,8 @@ class ElectromagneticEquations:
             v = update_velocity(v, (electric_force(E) + magnetic_force(v, B)) / (m * self.Gamma(v)), 0.5 * dt)
             x = update_position(x, v, dt)
             if np.linalg.norm(v) > self.c:
-                x += v * dt  # Update position with v_plus before returning
-                return x, v  # Return position and v_plus
+                x += v * dt  
+                return x, v  
             v = update_velocity(v, (electric_force(E) + magnetic_force(v, B)) / (m * self.Gamma(v)), 0.5 * dt)
         else:
             raise ValueError("Invalid integrator type. Choose 'hamiltonian' or 'symplectic'.")    
@@ -282,7 +255,6 @@ class ElectromagneticEquations:
         r = p.position.copy()
         v = p.velocity.copy()
         dt = p.dt    
-        # Calculate the Lorentz factor using the correct value of c
         gamma = self.Gamma(v) #1 / np.sqrt(1 - (np.linalg.norm(v) / c)**2)    
         # Calculate the relativistic momentum
         momentum = gamma * m * v    
@@ -291,7 +263,6 @@ class ElectromagneticEquations:
         # Update the momentum (half-step)
         p_half = momentum + (dt / 2) * F    
         # Update the velocity (half-step)
-        # Need to recompute gamma because momentum has changed
         gamma_half = np.sqrt(1 + (np.linalg.norm(p_half) / (m * c))**2)
         v_half = p_half / (gamma_half * m)    
         # Update the position
@@ -299,7 +270,6 @@ class ElectromagneticEquations:
         # Update the momentum (full-step)
         F_new = q * (E + np.cross(v_half, B))
         p_new = p_half + (dt / 2) * F_new    
-        # Update the velocity (full-step)
         gamma_new = np.sqrt(1 + (np.linalg.norm(p_new) / (m * c))**2)
         v_new = p_new / (gamma_new * m)    
         return r_new, v_new
@@ -313,11 +283,9 @@ class ElectromagneticEquations:
         dt = p.dt
         x = p.position.copy()
         v = p.velocity.copy()    
-        # Calculate the initial Lorentz factor gamma
         gamma = self.Gamma(v)    
         # Calculate the intermediate velocity v_prime
         v_prime = v + (q * dt / (2.0 * m * gamma)) * (E + np.cross(v, B))        
-        # Calculate the Lorentz factor gamma_prime for the updated velocity v_prime
         if np.linalg.norm(v_prime) > self.c:
                 x += v_prime * dt  # Update position with v_plus before returning            
                 return x, v_prime  # Return position and v_plus
@@ -326,7 +294,6 @@ class ElectromagneticEquations:
         tt = (q * dt / (2.0 * m * gamma_prime)) * B
         s = 2.0 * tt / (1.0 + np.linalg.norm(tt)**2)
         v_new = v_prime + np.cross(v_prime + np.cross(v_prime, tt), s)    
-        # Calculate the new position x_new using the average of the old and new velocities
         x_new = x + dt * (v + v_new) / 2.0        
         return x_new, v_new  
         
@@ -407,7 +374,6 @@ class ElectromagneticEquations:
         P = (q**2 * a_magnitude**2 * gamma**6) / (6 * np.pi * self.EPSILON_0  * self.c**3)
         # Energy lost in time dt
         delta_E = P * dt 
-        #print (delta_E)
         # Update the particle's kinetic energy
         KE_initial = (gamma - 1) * m * self.c**2         
         KE_final = KE_initial - delta_E
@@ -422,7 +388,6 @@ class ElectromagneticEquations:
         else:
             v_new = np.array([0.0, 0.0, 0.0])
             KE_final= m * self.c ** 2
-        #print(np.linalg.norm(v_new) ,   np.linalg.norm(v) , np.linalg.norm(v_new)-   np.linalg.norm(v)  )
         return v_new, delta_E, KE_final                 
        
     #########################################     
@@ -439,63 +404,44 @@ class ElectromagneticEquations:
         # Ensure inputs are arrays for vectorized operations
         if not isinstance(retarded_times, np.ndarray):
             retarded_times = np.array(retarded_times)    
-        # Initialize arrays to hold the final states
         num_particles = len(particles)
-        pos_final = np.zeros((num_particles, 3))  # Adjust 3 if position dimensionality differs
+        pos_final = np.zeros((num_particles, 3)) 
         vel_final = np.zeros((num_particles, 3))
         acc_final = np.zeros((num_particles, 3))    
         # Loop to vectorize (minimal loop over particles still needed if data structure varies per particle)
         for i, particle in enumerate(particles):
-            # Vectorized index finding
             indices = np.searchsorted(particle.cumulative_times, retarded_times[i], side='right') - 1
             indices = np.clip(indices, 0, None)  # Ensure indices are not negative    
-            # Retrieve states using indices
             pos_final[i] = particle.pos_traj[indices] if indices < len(particle.pos_traj) else particle.pos_traj[-1]
             vel_final[i] = particle.vel_traj[indices] if indices < len(particle.vel_traj) else particle.vel_traj[-1]
             acc_final[i] = particle.acc_traj[indices] if indices < len(particle.acc_traj) else particle.acc_traj[-1]    
         return pos_final, vel_final, acc_final 
         
-    #########################################        
- 
+    #########################################         
     def calculate_retarded_distances_vectorized(self, observer_position, retarded_positions):
-        # Calculate the displacement vectors between the observer and retarded positions
         r_retarded = observer_position - retarded_positions
-        # Calculate the magnitudes of these displacement vectors
         r_retarded_mag = np.linalg.norm(r_retarded, axis=1)        
         # Create a mask where the distances are exactly zero
         zero_distance_mask = (r_retarded_mag == 0)        
-        # Initialize the unit vector array
         r_retarded_unit = np.zeros_like(r_retarded)        
         # Calculate unit vectors only where there are non-zero distances
         non_zero_distances = ~zero_distance_mask
         r_retarded_unit[non_zero_distances] = r_retarded[non_zero_distances] / r_retarded_mag[non_zero_distances, np.newaxis]        
-        # If you need to explicitly set zero vectors for zero distances:
+        # explicitly set zero vectors for zero distances:
         r_retarded_unit[zero_distance_mask] = 0    
-        # Optionally, ensure r_retarded is zero where distances are zero
         r_retarded[zero_distance_mask] = 0
         r_retarded_mag[zero_distance_mask] = 0    
-        return r_retarded, r_retarded_mag, r_retarded_unit
-
-    def calculate_retarded_distances_vectorized1(self, observer_position, retarded_positions):
-        r_retarded = observer_position - retarded_positions        
-        r_retarded_mag = np.linalg.norm(r_retarded, axis=1)        
-        zero_distance_mask = (r_retarded_mag == 0)    
-        r_retarded_unit = np.zeros_like(r_retarded)    
-        non_zero_distances = ~zero_distance_mask
-        r_retarded_unit[non_zero_distances] = r_retarded[non_zero_distances] / r_retarded_mag[non_zero_distances, np.newaxis]    
         return r_retarded, r_retarded_mag, r_retarded_unit
         
     ######################################### 
     def calculate_magnetic_field_vectorized(self, charges, r_retarded_mag, r_retarded_unit, retarded_velocities):
-        # Calculate the direction of the magnetic field using the cross product for each pair
         B_dir = np.cross(r_retarded_unit, retarded_velocities)
         B_dir_mag = np.linalg.norm(B_dir, axis=1, keepdims=True)    
-        # Initialize B_dir_unit safely
         B_dir_unit = np.zeros_like(B_dir)    
         # Only perform division where B_dir_mag is greater than zero
-        safe_indices = B_dir_mag[:, 0] > 0  # Since B_dir_mag is kept in dimensions with 'keepdims=True'
+        safe_indices = B_dir_mag[:, 0] > 0  
         B_dir_unit[safe_indices] = B_dir[safe_indices] / B_dir_mag[safe_indices]    
-        # Compute the magnetic field magnitude using the Biot-Savart Law vectorized
+        # Magnetic field magnitude using the Biot-Savart Law
         norm_product = np.linalg.norm(retarded_velocities, axis=1) * np.linalg.norm(r_retarded_unit, axis=1) + np.finfo(float).eps
         cos_theta = np.einsum('ij,ij->i', r_retarded_unit, retarded_velocities) / norm_product
         cos_theta = np.clip(cos_theta, -1, 1)  # Ensuring cos_theta is within the valid range for sqrt
@@ -503,20 +449,15 @@ class ElectromagneticEquations:
         B_mag = (self.MU_0 / (4 * np.pi)) * (charges * np.linalg.norm(retarded_velocities, axis=1) * sin_theta) / (r_retarded_mag ** 2 + np.finfo(float).eps)
         return B_mag[:, None] * B_dir_unit  
         
-    ######################################### 
-        
-    
-    def calculate_electric_field_vectorized(self, charges, r_retarded, r_retarded_mag, r_retarded_unit, retarded_velocities, retarded_accs):
-        epsilon = np.finfo(float).eps  # Small constant to prevent division by zero
-        
-        # Normalize retarded velocities
+    #########################################             
+    def calculate_electric_field_vectorized(self, charges, r_retarded, r_retarded_mag,
+                                            r_retarded_unit, retarded_velocities, retarded_accs):
+        epsilon = np.finfo(float).eps 
         beta = retarded_velocities / self.c
         gamma_ret = self.Gamma_vec(beta)
-        one_minus_beta_dot_r = 1 - np.einsum('ij,ij->i', beta, r_retarded_unit)
-        
+        one_minus_beta_dot_r = 1 - np.einsum('ij,ij->i', beta, r_retarded_unit)        
         # Identify safe indices where no divisions by zero occur
-        safe_indices = (r_retarded_mag > epsilon) & (np.abs(one_minus_beta_dot_r) > epsilon)
-        
+        safe_indices = (r_retarded_mag > epsilon) & (np.abs(one_minus_beta_dot_r) > epsilon)        
         # Filter all arrays to include only safe indices
         filtered_charges = charges[safe_indices]
         filtered_r_retarded_mag = r_retarded_mag[safe_indices]
@@ -524,55 +465,16 @@ class ElectromagneticEquations:
         filtered_beta = beta[safe_indices]
         filtered_gamma_ret = gamma_ret[safe_indices]
         filtered_one_minus_beta_dot_r = one_minus_beta_dot_r[safe_indices]
-        filtered_retarded_accs = retarded_accs[safe_indices]
-        
-        # Calculate common_factor only for safe indices
+        filtered_retarded_accs = retarded_accs[safe_indices]        
         common_factor = (filtered_charges / (4 * np.pi * self.EPSILON_0 * filtered_r_retarded_mag**2))[:, None]
-        
         # Calculate velocity and acceleration terms only for safe indices
         velocity_term = (filtered_r_retarded_unit - filtered_beta) / (filtered_gamma_ret[:, None]**2 * filtered_one_minus_beta_dot_r[:, None]**3)
         acc_term = np.cross(filtered_r_retarded_unit, np.cross(filtered_r_retarded_unit - filtered_beta, filtered_retarded_accs / self.c)) / (self.c * filtered_one_minus_beta_dot_r[:, None]**3)
-        
-        # Combine terms safely
-        electric_field = common_factor * (velocity_term + acc_term)
-        
+        electric_field = common_factor * (velocity_term + acc_term)        
         # Initialize full electric field array
         full_electric_field = np.zeros((charges.shape[0], 3))
-        full_electric_field[safe_indices] = electric_field
-        
-        return full_electric_field
-        
-  
-
-
-    
-    def calculate_electric_field_vectorized11(self, charges, r_retarded, r_retarded_mag, r_retarded_unit, retarded_velocities, retarded_accs):
-        epsilon = np.finfo(float).eps  # Small constant to prevent division by zero        
-        # Normalize retarded velocities
-        beta = retarded_velocities / self.c
-        gamma_ret = self.Gamma_vec(beta)
-        one_minus_beta_dot_r = 1 - np.einsum('ij,ij->i', beta, r_retarded_unit)        
-        # Use epsilon to avoid divide by zero in r_retarded_mag and one_minus_beta_dot_r
-        r_retarded_mag_safe = r_retarded_mag + epsilon
-        one_minus_beta_dot_r_safe = one_minus_beta_dot_r + epsilon        
-        # Calculate common_factor, using epsilon to ensure no division by zero
-        common_factor = (charges / (4 * np.pi * self.EPSILON_0 * r_retarded_mag_safe**2))[:, None]  # Ensure it's (n, 1)        
-        # Calculate velocity and acceleration terms safely
-        velocity_term = (r_retarded_unit - beta) / (gamma_ret[:, None]**2 * one_minus_beta_dot_r_safe[:, None]**3)
-        acc_term = np.cross(r_retarded_unit, np.cross(r_retarded_unit - beta, retarded_accs / self.c)) / (self.c * one_minus_beta_dot_r_safe[:, None]**3)       
-        # Combine terms safely
-        electric_field = common_factor * (velocity_term + acc_term)        
-        return electric_field
-
-    def calculate_electric_field_vectorized1(self, charges, r_retarded, r_retarded_mag, r_retarded_unit, retarded_velocities, retarded_accs):
-        beta = retarded_velocities / self.c
-        gamma_ret = self.Gamma_vec(beta)
-        one_minus_beta_dot_r = 1 - np.einsum('ij,ij->i', beta, r_retarded_unit)    
-        # Correcting common_factor shape: (n, 1) for proper broadcasting
-        common_factor = (charges / (4 * np.pi * self.EPSILON_0 * r_retarded_mag**2))[:, None]  # Ensure it's (n, 1)    
-        velocity_term = (r_retarded_unit - beta) / (gamma_ret[:, None]**2 * one_minus_beta_dot_r[:, None]**3)
-        acc_term = np.cross(r_retarded_unit, np.cross(r_retarded_unit - beta, retarded_accs / self.c)) / (self.c * one_minus_beta_dot_r[:, None]**3)
-        return common_factor * (velocity_term + acc_term)    
+        full_electric_field[safe_indices] = electric_field        
+        return full_electric_field          
 
     #########################################    
     # Interaction non-vectorized
