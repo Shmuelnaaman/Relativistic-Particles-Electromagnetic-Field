@@ -11,6 +11,7 @@ class ElectromagneticEquations:
         self.ELEMENTARY_CHARGE = 1.602176634*1e-19
         self.e_mass = 9.10*1e-31  
         self.p_mass = 1.67*1e-27  
+         
         self.k =8.9875517873681764e9
     #########################################
     # FORCE
@@ -469,50 +470,55 @@ class ElectromagneticEquations:
         r_retarded_unit[non_zero_distances] = r_retarded[non_zero_distances] / r_retarded_mag[non_zero_distances, np.newaxis]    
         return r_retarded, r_retarded_mag, r_retarded_unit
         
-    #########################################
-
- 
-
+    ######################################### 
     def calculate_magnetic_field_vectorized(self, charges, r_retarded_mag, r_retarded_unit, retarded_velocities):
         # Calculate the direction of the magnetic field using the cross product for each pair
         B_dir = np.cross(r_retarded_unit, retarded_velocities)
-        B_dir_mag = np.linalg.norm(B_dir, axis=1, keepdims=True)
-    
+        B_dir_mag = np.linalg.norm(B_dir, axis=1, keepdims=True)    
         # Initialize B_dir_unit safely
-        B_dir_unit = np.zeros_like(B_dir)
-    
+        B_dir_unit = np.zeros_like(B_dir)    
         # Only perform division where B_dir_mag is greater than zero
         safe_indices = B_dir_mag[:, 0] > 0  # Since B_dir_mag is kept in dimensions with 'keepdims=True'
-        B_dir_unit[safe_indices] = B_dir[safe_indices] / B_dir_mag[safe_indices]
-    
+        B_dir_unit[safe_indices] = B_dir[safe_indices] / B_dir_mag[safe_indices]    
         # Compute the magnetic field magnitude using the Biot-Savart Law vectorized
         norm_product = np.linalg.norm(retarded_velocities, axis=1) * np.linalg.norm(r_retarded_unit, axis=1) + np.finfo(float).eps
         cos_theta = np.einsum('ij,ij->i', r_retarded_unit, retarded_velocities) / norm_product
         cos_theta = np.clip(cos_theta, -1, 1)  # Ensuring cos_theta is within the valid range for sqrt
-        sin_theta = np.sqrt(np.clip(1 - cos_theta**2, 0, 1))
-    
+        sin_theta = np.sqrt(np.clip(1 - cos_theta**2, 0, 1))    
         B_mag = (self.MU_0 / (4 * np.pi)) * (charges * np.linalg.norm(retarded_velocities, axis=1) * sin_theta) / (r_retarded_mag ** 2 + np.finfo(float).eps)
-        return B_mag[:, None] * B_dir_unit
-
-
-
-    
-    def calculate_magnetic_field_vectorized1(self, charges, r_retarded_mag, r_retarded_unit, retarded_velocities):
-        # Calculate the direction of the magnetic field using the cross product for each pair
-        B_dir = np.cross(r_retarded_unit, retarded_velocities)
-        B_dir_mag = np.linalg.norm(B_dir, axis=1, keepdims=True)
-        B_dir_unit = np.where(B_dir_mag > 0, B_dir / B_dir_mag, 0)  # Normalize only non-zero magnitudes    
-        # Compute the magnetic field magnitude using the Biot-Savart Law vectorized
-        norm_product = np.linalg.norm(retarded_velocities, axis=1) * np.linalg.norm(r_retarded_unit, axis=1)
-        cos_theta = np.einsum('ij,ij->i', r_retarded_unit, retarded_velocities) / norm_product
-        #sin_theta = np.sqrt(1 - cos_theta**2)
-        sin_theta = np.sqrt(np.clip(1 - cos_theta**2, 0, 1))
-
-        B_mag = (self.MU_0 / (4 * np.pi)) * (charges * np.linalg.norm(retarded_velocities, axis=1) * sin_theta) / (r_retarded_mag ** 2)    
-        return B_mag[:, None] * B_dir_unit    
+        return B_mag[:, None] * B_dir_unit  
         
     #########################################
+ 
+
     def calculate_electric_field_vectorized(self, charges, r_retarded, r_retarded_mag, r_retarded_unit, retarded_velocities, retarded_accs):
+        # Define realistic minimums for your simulation
+        min_distance = 1e-12  # Minimum distance in meters (or other suitable unit)
+        min_relative_velocity = 1e-12  # Minimum for (1 - beta * r_unit) to avoid division by a value too close to zero
+    
+        # Normalize retarded velocities
+        beta = retarded_velocities / self.c
+        gamma_ret = self.Gamma_vec(beta)
+        one_minus_beta_dot_r = 1 - np.einsum('ij,ij->i', beta, r_retarded_unit)
+    
+        # Use realistic minimums to avoid divide by zero
+        r_retarded_mag_safe = np.maximum(r_retarded_mag, min_distance)
+        one_minus_beta_dot_r_safe = np.maximum(one_minus_beta_dot_r, min_relative_velocity)
+    
+        # Calculate common_factor without epsilon, using realistic minimums
+        common_factor = (charges / (4 * np.pi * self.EPSILON_0 * r_retarded_mag_safe**2))[:, None]  # Ensure it's (n, 1)
+    
+        # Calculate velocity and acceleration terms safely
+        velocity_term = (r_retarded_unit - beta) / (gamma_ret[:, None]**2 * one_minus_beta_dot_r_safe[:, None]**3)
+        acc_term = np.cross(r_retarded_unit, np.cross(r_retarded_unit - beta, retarded_accs / self.c)) / (self.c * one_minus_beta_dot_r_safe[:, None]**3)
+    
+        # Combine terms safely
+        electric_field = common_factor * (velocity_term + acc_term)
+    
+        return electric_field
+
+    
+    def calculate_electric_field_vectorized11(self, charges, r_retarded, r_retarded_mag, r_retarded_unit, retarded_velocities, retarded_accs):
         epsilon = np.finfo(float).eps  # Small constant to prevent division by zero        
         # Normalize retarded velocities
         beta = retarded_velocities / self.c

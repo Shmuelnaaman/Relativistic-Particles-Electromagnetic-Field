@@ -25,7 +25,9 @@ class VisualizationManager:
         self.num_particle = num_particle
         self.particle_manager = particle_manager
         pygame.init()
-        
+        self.method_names = [("boris_push", 'B'), ('analytic_rel', 'AR') , 
+                             ("rk4_step", 'L4'),("rk6_step", 'L6'), ("relativ_intgrtr", 'R'),
+                             ("vay_push", 'VP'), ("Hamiltonian", 'H') ,("vay_algorithm", 'VA')]  
         self.fonts = {}
         self.x_in, self.y_in = np.meshgrid(range(0, self.WIDTH, self.GRID_SPACING), 
                                            range(0, self.HEIGHT,self.GRID_SPACING))   
@@ -35,11 +37,10 @@ class VisualizationManager:
         self.electric_field_surface = pygame.Surface((self.WIDTH, self.HEIGHT), pygame.SRCALPHA)  
 
 #############################################################################################
-    def run_simulation(self, mass_mults, charge_mult, e_initial_velocity, p_initial_velocity, dt, B_m, E_m, electric_field, magnetic_field):
-      
+    def run_simulation(self, mass_mults, charge_mult, e_initial_velocity, p_initial_velocity, 
+                       dt, B_m, E_m, electric_field, magnetic_field):      
         # Setup the simulation GUI with necessary parameters
-        self.setup_simulation_gui(B_m,mass_mults)        
-        # Assign parameters to instance variables
+        self.setup_simulation_gui(B_m,E_m,mass_mults,charge_mult)        
         self.mass_mults= mass_mults
         self.mass_mults_sim =mass_mults
         self.charge_mult = charge_mult
@@ -47,11 +48,6 @@ class VisualizationManager:
         self.dt, self.B_m, self.E_m = dt, B_m, E_m
         self.electric_field, self.magnetic_field = electric_field, magnetic_field
         self.allow_creation = True        
-        # Define available simulation methods
-        self.method_names = [("boris_push", 'B'), ('analytic_rel', 'AR') , 
-                             ("rk4_step", 'L4'),("rk6_step", 'L6'), ("relativ_intgrtr", 'R'),
-                             ("vay_push", 'VP'), ("Hamiltonian", 'H') ,("vay_algorithm", 'VA')]  
-        # Initialize simulation with the first particle
         self.add_initial_particle()        
         # Execute the main simulation loop
         self.run_main_loop()        
@@ -62,7 +58,9 @@ class VisualizationManager:
         self.B_m_sim = values['Magnetic Field']
         self.E_m_sim = values['Electric Field']
         self.mass_mults_sim = values['Mass Factor']
+        self.charge_mults_sim = values['Charge Factor']
         self.allow_creation = values['allow_creation']      
+        self.selected_method = values['Selected Method']        
 
     def handle_pygame_events(self, counter):
         num_particles = len(self.particle_manager.particles)
@@ -76,64 +74,55 @@ class VisualizationManager:
                     counter = self.handle_mousebuttondown_event( counter, num_particles )
         return True, counter      
         
-    def setup_simulation_gui(self, B_m, mass_mults):
-        layout = [
-            [sg.Text('Magnetic Field'), sg.Slider(range=(-4000, 4000), orientation='h', 
-                                                  key='Magnetic Field', default_value=B_m, resolution=0.001)],
-            [sg.Text('Electric Field'), sg.Slider(range=(-3000, 3000), orientation='h', 
-                                                  key='Electric Field', default_value=0.00, resolution=0.001)],
-            [sg.Text('Mass Factor'), sg.Slider(range=(1, 2e3), orientation='h', 
-                                               key='Mass Factor', default_value=mass_mults, resolution=1)],
-            [sg.Checkbox('Particle Creation', key='allow_creation', default=True)],
-            [sg.Button('Update Simulation', key='update_simulation'),
-             sg.Button('Keep One Particle', key='keep_one_particle')],
-        ]
+    def setup_simulation_gui(self, B_m,E_m, mass_mults, charge_mult):
+        method_options = [name for name, _ in self.method_names]
+        layout = [[sg.Text('Magnetic Field'), sg.Slider(range=(-40, 40), orientation='h', 
+                                                        key='Magnetic Field', default_value=B_m, resolution=0.001)],
+                  [sg.Text('Electric Field'), sg.Slider(range=(-30, 30), orientation='h', 
+                                                        key='Electric Field', default_value=E_m, resolution=0.001)],
+                  [sg.Text('Mass Factor'), sg.Slider(range=(1, 200), orientation='h', 
+                                                     key='Mass Factor', default_value=mass_mults, resolution=1)],
+                  [sg.Text('Charge Factor'), sg.Slider(range=(-10000, 10000), orientation='h', 
+                                                     key='Charge Factor', default_value=charge_mult, resolution=1)],                  
+                  [sg.Text('Select Method'), sg.Combo(method_options, key='Selected Method', default_value='Hamiltonian')],
+                  [sg.Checkbox('Particle Creation', key='allow_creation', default=True)],
+                  [sg.Button('Update Simulation', key='update_simulation'),
+                   sg.Button('Keep One Particle', key='keep_one_particle')],        ]
         self.window = sg.Window('Simulation Controls', layout)
         _, values = self.window.read(timeout=10)
-        self.update_simulation_parameters(values)    
-        
+        self.update_simulation_parameters(values)             
+
     def handle_mousebuttondown_event(self, counter, num_particles):
         mouse_x, mouse_y = pygame.mouse.get_pos()
         zoom_x, zoom_y = self.zoom_center
-        x, y = self.screen_to_world(mouse_x, mouse_y, (zoom_x, zoom_y), self.zoom_factor)
-        
+        x, y = self.screen_to_world(mouse_x, mouse_y, (zoom_x, zoom_y), self.zoom_factor)        
         if num_particles < self.num_particle and self.allow_creation:
-            # Remaining code for method selection and particle creation
-            used_methods = [particle.velocity_method for particle in self.particle_manager.particles]
-            method_usage = {}
-            for method in used_methods:
-                method_name = method.__name__
-                if method_name in method_usage:
-                    method_usage[method_name] += 1
-                else:
-                    method_usage[method_name] = 1
-            sorted_methods = sorted(self.method_names, key=lambda method: method_usage.get(method[0], 0))
-            method_name, letter = sorted_methods[0]
-            push_method = getattr(self.em_equations, method_name)
-            
+            method_name = self.selected_method
+            push_method = getattr(self.em_equations, method_name)    
             self.particle_manager.add_particle(
                 np.array([x, y, 0.0]),
                 np.array(self.e_initial_velocity),
                 self.charge_mult * self.e_charge,
                 self.mass_mults * self.e_mass,
                 self.dt,
-                self.em_equations.Lorentz, # Lorentz, Landau_Lifshitz
+                self.em_equations.Lorentz,  # Lorentz, Landau_Lifshitz
                 self.em_equations.radiation_reaction,
                 push_method, 
                 self.electric_field,
                 self.magnetic_field, 
-                letter
+                method_name[0:3]  # assuming method_names stored as (method_name, abbreviation)
             )
             print(f'Particle added, method: {method_name}')        
         counter += 1
-        return counter
+        return counter    
         
     def run_main_loop(self):
         timeout = 10
         counter = 0
         running = True
         while running:
-            start_time = time.time()
+            start_time = time.time()  # Start timing
+
             event, values = self.window.read(timeout=0)
             if event == sg.WINDOW_CLOSED:
                 running = False  # Set running to False to close both windows 
@@ -148,15 +137,20 @@ class VisualizationManager:
                 break
             # Particle management mass_mults_sim
             self.particle_manager.update(self.electric_field, self.magnetic_field,
-                                         self.E_m_sim, self.B_m_sim, self.mass_mults_sim, self.zoom_factor)
+                                         self.E_m_sim, self.B_m_sim, self.mass_mults_sim, self.charge_mults_sim, self.zoom_factor)
             self.remove_escaping_particles()            
             # Visualization            
-            counter = self.visualize(self.electric_field, self.magnetic_field, self.E_m_sim, self.B_m_sim, counter)            
+            counter = self.visualize(self.electric_field, self.magnetic_field, 
+                                     self.E_m_sim, self.B_m_sim, counter)            
             # Check if timeout exceeded
             if time.time() - start_time > timeout:
                 break            
             # Maintain desired frame rate
-            self.clock.tick(240) 
+            end_time = time.time()
+            #iteration_duration = end_time - start_time
+            
+            #print(iteration_duration)
+            self.clock.tick(40) 
     
     def visualize(self, electric_field, magnetic_field, E_m, B_m, counter, initial_zoom=1.0):
         num_particles = len(self.particle_manager.particles)
@@ -209,7 +203,7 @@ class VisualizationManager:
         self.particle_manager.add_particle(
             np.array([400.0, 301.0, 0.0]),
             self.p_initial_velocity,
-            self.charge_mult * self.p_charge,
+            self.charge_mult * self.p_charge*0,
             self.mass_mults * self.p_mass, self.dt,
             self.em_equations.Lorentz,
             self.em_equations.radiation_reaction,
