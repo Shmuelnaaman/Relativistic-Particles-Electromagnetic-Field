@@ -11,7 +11,10 @@ class VisualizationManager:
         self.WIDTH, self.HEIGHT = width, height
         self.GRID_SPACING = GRID_SPACING
         self.zoom_factor = zoom_factor
+        self.x_in, self.y_in = np.meshgrid(range(0, self.WIDTH, self.GRID_SPACING), 
+                                           range(0, self.HEIGHT,self.GRID_SPACING))   
 
+        
         self.epsilon = np.finfo(np.float64).eps
         self.zoom_center = [self.WIDTH // 2, self.HEIGHT // 2]
         self.ARROW_COLOR_E = (128, 128, 128)
@@ -29,8 +32,7 @@ class VisualizationManager:
                              ("rk4_step", 'L4'),("rk6_step", 'L6'), ("relativ_intgrtr", 'R'),
                              ("vay_push", 'VP'), ("Hamiltonian", 'H') ,("vay_algorithm", 'VA')]  
         self.fonts = {}
-        self.x_in, self.y_in = np.meshgrid(range(0, self.WIDTH, self.GRID_SPACING), 
-                                           range(0, self.HEIGHT,self.GRID_SPACING))   
+ 
         self.screen = pygame.display.set_mode((self.WIDTH, self.HEIGHT))
         pygame.display.set_caption("Particle Simulation")
         self.clock = pygame.time.Clock()
@@ -53,27 +55,7 @@ class VisualizationManager:
         self.run_main_loop()        
         # Cleanup resources and exit the simulation properly
         self.shutdown_simulation() 
-        
-    def update_simulation_parameters(self, values):
-        self.B_m_sim = values['Magnetic Field']
-        self.E_m_sim = values['Electric Field']
-        self.mass_mults_sim = values['Mass Factor']
-        self.charge_mults_sim = values['Charge Factor']
-        self.allow_creation = values['allow_creation']      
-        self.selected_method = values['Selected Method']        
 
-    def handle_pygame_events(self, counter):
-        num_particles = len(self.particle_manager.particles)
-        for event in pygame.event.get():            
-            if event.type == pygame.QUIT:
-                return False, counter  # Return a tuple with running=False and counter
-            elif event.type == pygame.MOUSEWHEEL:
-                self.handle_mousewheel_event(event)
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1:  # Left mouse button
-                    counter = self.handle_mousebuttondown_event( counter, num_particles )
-        return True, counter      
-        
     def setup_simulation_gui(self, B_m,E_m, mass_mults, charge_mult):
         method_options = [name for name, _ in self.method_names]
         layout = [[sg.Text('Magnetic Field'), sg.Slider(range=(-40, 40), orientation='h', 
@@ -90,7 +72,206 @@ class VisualizationManager:
                    sg.Button('Keep One Particle', key='keep_one_particle')],        ]
         self.window = sg.Window('Simulation Controls', layout)
         _, values = self.window.read(timeout=10)
-        self.update_simulation_parameters(values)             
+        self.update_simulation_parameters(values)      
+    
+    def add_initial_particle(self):
+        self.particle_manager.add_particle(
+            np.array([402.0, 302.0, 0.0]),
+            self.p_initial_velocity,
+            self.charge_mult * self.p_charge,
+            self.mass_mults * self.p_mass, self.dt,
+            self.em_equations.Lorentz,
+            self.em_equations.radiation_reaction,
+            self.em_equations.boris_push,
+            self.electric_field, self.magnetic_field,  'p'  )  
+###################################################################################################        
+    def run_main_loop(self):
+        timeout = 10
+        counter = 0
+        running = True
+        while running:
+            start_time = time.time()  # Start timing
+            event, values = self.window.read(timeout=0)
+            if event == sg.WINDOW_CLOSED:
+                running = False  # Set running to False to close both windows 
+            if event == 'update_simulation':
+                self.update_simulation_parameters(values)                 
+            if event == 'keep_one_particle':
+                self.keep_one_particle()            
+            # Pygame event handling
+            pygame_running, counter = self.handle_pygame_events(counter)     
+            running = running and pygame_running  # Combine states
+            if not running:
+                break
+            # Particle management mass_mults_sim
+            self.particle_manager.update(self.electric_field, self.magnetic_field,
+                                         self.E_m_sim, self.B_m_sim, 
+                                         self.mass_mults_sim, self.charge_mults_sim, self.zoom_factor)
+            self.remove_escaping_particles()            
+            # Visualization            
+            counter = self.visualize(self.electric_field, self.magnetic_field, 
+                                     self.E_m_sim, self.B_m_sim, counter)            
+            # Check if timeout exceeded
+            if time.time() - start_time > timeout:
+                break            
+            # Maintain desired frame rate
+            end_time = time.time()
+            #iteration_duration = end_time - start_time            
+            #print(iteration_duration)
+            self.clock.tick(40) 
+ 
+    def update_simulation_parameters(self, values):
+        self.B_m_sim = values['Magnetic Field']
+        self.E_m_sim = values['Electric Field']
+        self.mass_mults_sim = values['Mass Factor']
+        self.charge_mults_sim = values['Charge Factor']
+        self.allow_creation = values['allow_creation']      
+        self.selected_method = values['Selected Method']        
+
+    def keep_one_particle(self):
+        if self.particle_manager.particles:
+            self.particle_manager.particles = [self.particle_manager.particles[0]]  
+    
+    def handle_pygame_events(self, counter):
+        num_particles = len(self.particle_manager.particles)
+        for event in pygame.event.get():            
+            if event.type == pygame.QUIT:
+                return False, counter  # Return a tuple with running=False and counter
+            elif event.type == pygame.MOUSEWHEEL:
+                self.handle_mousewheel_event(event)
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:  # Left mouse button
+                    counter = self.handle_mousebuttondown_event( counter, num_particles )
+        return True, counter    
+
+    def handle_mousewheel_event(self, event):
+        mouse_screen_x, mouse_screen_y = pygame.mouse.get_pos()
+        zoom_factor_change = 1.05 if event.y > 0 else 0.95
+        self.zoom_factor *= zoom_factor_change
+    
+        world_x, world_y = self.screen_to_world(mouse_screen_x, mouse_screen_y, self.zoom_center, self.zoom_factor)
+        self.zoom_factor = self.zoom_factor * zoom_factor_change
+        new_mouse_screen_x, new_mouse_screen_y = self.world_to_screen(world_x, world_y, self.zoom_center, self.zoom_factor)
+    
+        screen_dx = mouse_screen_x - new_mouse_screen_x
+        screen_dy = mouse_screen_y - new_mouse_screen_y
+        self.zoom_center[0] += screen_dx
+        self.zoom_center[1] += screen_dy    
+
+    def handle_mousewheel_event1(self, event):
+        mouse_screen_x, mouse_screen_y = pygame.mouse.get_pos()    
+        # Apply zoom factor change
+        zoom_factor_change = 1.05 if event.y > 0 else 0.95
+        new_zoom_factor = self.zoom_factor * zoom_factor_change        
+        # Convert screen coordinates to world coordinates using the current zoom center and factor
+        world_x, world_y = self.screen_to_world(mouse_screen_x, mouse_screen_y, self.zoom_center, self.zoom_factor)        
+        # Update the zoom factor
+        self.zoom_factor = new_zoom_factor  
+        #print('zoom_factor', self.zoom_factor)
+        # Convert the world coordinates back to screen coordinates using the new zoom factor
+        new_mouse_screen_x, new_mouse_screen_y = self.world_to_screen(world_x, world_y, self.zoom_center, self.zoom_factor)        
+        # Calculate the difference between where the mouse was and where the point has moved on screen
+        screen_dx = mouse_screen_x - new_mouse_screen_x
+        screen_dy = mouse_screen_y - new_mouse_screen_y        
+        # Shift the zoom center by the difference to keep the particle under the mouse stationary
+        self.zoom_center[0] += screen_dx
+        self.zoom_center[1] += screen_dy  
+    
+    def remove_escaping_particles(self):
+        if not self.particle_manager.particles:
+            return        
+        positions = np.array([particle.position for particle in self.particle_manager.particles])
+        velocities = np.array([np.squeeze(particle.velocity) for particle in self.particle_manager.particles])        
+        # Calculate if any component of the velocity is NaN and invert the result
+        valid_velocities = ~np.isnan(velocities).any(axis=1)        
+        max_distance = 2 * max(self.WIDTH, self.HEIGHT)
+        within_bounds = np.linalg.norm(positions, axis=1) < max_distance        
+        # Combine conditions
+        valid_indices = valid_velocities & within_bounds        
+        # Initialize a new list for particles to keep
+        new_particle_list = []
+        for particle, valid in zip(self.particle_manager.particles, valid_indices):
+            if valid:
+                new_particle_list.append(particle)
+            else:
+                print(f"Removing particle: {particle.letter}")           
+        self.particle_manager.particles = new_particle_list    
+##########################################################################################################
+    def visualize(self, electric_field, magnetic_field, E_m, B_m, counter, initial_zoom=1.0):
+        num_particles = len(self.particle_manager.particles)
+        self.screen.fill((0, 0, 0))
+        self.electric_field_surface.fill((0, 0, 0, 0))
+    
+        # Visible dimensions based on zoom factor
+        visible_width = self.WIDTH / self.zoom_factor
+        visible_height = self.HEIGHT / self.zoom_factor
+    
+        # New grid spacing to maintain the same number of arrows
+        num_cells_x = int(self.WIDTH / self.GRID_SPACING)
+        num_cells_y = int(self.HEIGHT / self.GRID_SPACING)
+        new_spacing_x = visible_width / num_cells_x
+        new_spacing_y = visible_height / num_cells_y
+    
+        # Calculate start points for the grid to align with zoom center
+        start_x = self.zoom_center[0] - visible_width / 2
+        start_y = self.zoom_center[1] - visible_height / 2
+    
+        # Ensure start coordinates are within bounds
+        start_x = max(0, start_x)
+        start_y = max(0, start_y)
+    
+        # Generate the meshgrid for the current viewport
+        x_in, y_in = np.meshgrid(
+            np.linspace(start_x, start_x + visible_width, num_cells_x),
+            np.linspace(start_y, start_y + visible_height, num_cells_y)
+        )
+    
+        Z = np.zeros_like(x_in)
+        positions = np.dstack((x_in, y_in, Z))
+        E_field = electric_field(positions, E_m)
+        B_field = magnetic_field(positions, B_m)
+    
+        # Transform and visualize fields
+        if num_particles > 0:
+            E_transformed, B_transformed = self.transform_fields(E_field, B_field, counter, num_particles)
+        else:
+            E_transformed, B_transformed = E_field, B_field  # Fallback if no particles
+    
+        self.draw_arrows(E_transformed, B_transformed)
+        #print(counter , num_particles, counter , num_particles)
+        self.draw(self.particle_manager.particles, self.screen, counter % num_particles)
+        self.draw_particle_info(counter, num_particles)    
+        self.screen.blit(self.electric_field_surface, (0, 0))
+        pygame.display.flip()
+        return counter  
+ 
+
+
+    
+    def visualize1(self, electric_field, magnetic_field, E_m, B_m, counter, initial_zoom=1.0):
+        num_particles = len(self.particle_manager.particles)
+        self.screen.fill((0, 0, 0))
+        self.electric_field_surface.fill((0, 0, 0, 0))   
+        effective_grid_spacing = max(1, int(self.GRID_SPACING / self.zoom_factor))
+        self.x_in, self.y_in = np.meshgrid(
+            np.arange(0, self.WIDTH, effective_grid_spacing),
+            np.arange(0, self.HEIGHT, effective_grid_spacing)
+        )
+
+        
+        Z = np.zeros_like(self.x_in)    
+        # Stack X, Y, and Z to form a 3D array where each position vector is (x, y, z)
+        positions = np.dstack((self.x_in, self.y_in, Z))
+        E_field = electric_field(positions, E_m)
+        B_field = magnetic_field(positions, B_m)
+        E_transformed, B_transformed = self.transform_fields(E_field, B_field, counter, num_particles)    
+        self.draw_arrows(E_transformed, B_transformed)
+        #print(counter , num_particles, counter , num_particles)
+        self.draw(self.particle_manager.particles, self.screen, counter % num_particles)
+        self.draw_particle_info(counter, num_particles)    
+        self.screen.blit(self.electric_field_surface, (0, 0))
+        pygame.display.flip()
+        return counter                              
 
     def handle_mousebuttondown_event(self, counter, num_particles):
         mouse_x, mouse_y = pygame.mouse.get_pos()
@@ -116,125 +297,6 @@ class VisualizationManager:
         counter += 1
         return counter    
         
-    def run_main_loop(self):
-        timeout = 10
-        counter = 0
-        running = True
-        while running:
-            start_time = time.time()  # Start timing
-
-            event, values = self.window.read(timeout=0)
-            if event == sg.WINDOW_CLOSED:
-                running = False  # Set running to False to close both windows 
-            if event == 'update_simulation':
-                self.update_simulation_parameters(values)                 
-            if event == 'keep_one_particle':
-                self.keep_one_particle()            
-            # Pygame event handling
-            pygame_running, counter = self.handle_pygame_events(counter)     
-            running = running and pygame_running  # Combine states
-            if not running:
-                break
-            # Particle management mass_mults_sim
-            self.particle_manager.update(self.electric_field, self.magnetic_field,
-                                         self.E_m_sim, self.B_m_sim, self.mass_mults_sim, self.charge_mults_sim, self.zoom_factor)
-            self.remove_escaping_particles()            
-            # Visualization            
-            counter = self.visualize(self.electric_field, self.magnetic_field, 
-                                     self.E_m_sim, self.B_m_sim, counter)            
-            # Check if timeout exceeded
-            if time.time() - start_time > timeout:
-                break            
-            # Maintain desired frame rate
-            end_time = time.time()
-            #iteration_duration = end_time - start_time
-            
-            #print(iteration_duration)
-            self.clock.tick(40) 
-    
-    def visualize(self, electric_field, magnetic_field, E_m, B_m, counter, initial_zoom=1.0):
-        num_particles = len(self.particle_manager.particles)
-        self.screen.fill((0, 0, 0))
-        self.electric_field_surface.fill((0, 0, 0, 0))    
-        Z = np.zeros_like(self.x_in)    
-        # Stack X, Y, and Z to form a 3D array where each position vector is (x, y, z)
-        positions = np.dstack((self.x_in, self.y_in, Z))
-        #print(f"Type and value of x_in: {type(self.x_in)}, {self.x_in}")
-        #print(f"Type and value of y_in: {type(self.y_in)}, {self.y_in}")
-        E_field = electric_field(positions, E_m)
-        B_field = magnetic_field(positions, B_m)
-        E_transformed, B_transformed = self.transform_fields(E_field, B_field, counter, num_particles)    
-        self.draw_arrows(E_transformed, B_transformed)
-        #print(counter , num_particles, counter , num_particles)
-        self.draw(self.particle_manager.particles, self.screen, counter % num_particles)
-        self.draw_particle_info(counter, num_particles)    
-        self.screen.blit(self.electric_field_surface, (0, 0))
-        pygame.display.flip()
-        return counter       
-#############################################################################################      
- 
-
- 
-
-
-
-        
-    def handle_mousewheel_event(self, event):
-        mouse_screen_x, mouse_screen_y = pygame.mouse.get_pos()    
-        # Apply zoom factor change
-        zoom_factor_change = 1.05 if event.y > 0 else 0.95
-        new_zoom_factor = self.zoom_factor * zoom_factor_change        
-        # Convert screen coordinates to world coordinates using the current zoom center and factor
-        world_x, world_y = self.screen_to_world(mouse_screen_x, mouse_screen_y, self.zoom_center, self.zoom_factor)        
-        # Update the zoom factor
-        self.zoom_factor = new_zoom_factor  
-        #print('zoom_factor', self.zoom_factor)
-        # Convert the world coordinates back to screen coordinates using the new zoom factor
-        new_mouse_screen_x, new_mouse_screen_y = self.world_to_screen(world_x, world_y, self.zoom_center, self.zoom_factor)        
-        # Calculate the difference between where the mouse was and where the point has moved on screen
-        screen_dx = mouse_screen_x - new_mouse_screen_x
-        screen_dy = mouse_screen_y - new_mouse_screen_y        
-        # Shift the zoom center by the difference to keep the particle under the mouse stationary
-        self.zoom_center[0] += screen_dx
-        self.zoom_center[1] += screen_dy               
-#############################################################################################   
-    
-    def add_initial_particle(self):
-        self.particle_manager.add_particle(
-            np.array([400.0, 301.0, 0.0]),
-            self.p_initial_velocity,
-            self.charge_mult * self.p_charge*0,
-            self.mass_mults * self.p_mass, self.dt,
-            self.em_equations.Lorentz,
-            self.em_equations.radiation_reaction,
-            self.em_equations.boris_push,
-            self.electric_field, self.magnetic_field,  'p'  )  
-        
-    def keep_one_particle(self):
-        if self.particle_manager.particles:
-            self.particle_manager.particles = [self.particle_manager.particles[0]]  
-            
-    def remove_escaping_particles(self):
-        if not self.particle_manager.particles:
-            return        
-        positions = np.array([particle.position for particle in self.particle_manager.particles])
-        velocities = np.array([np.squeeze(particle.velocity) for particle in self.particle_manager.particles])        
-        # Calculate if any component of the velocity is NaN and invert the result
-        valid_velocities = ~np.isnan(velocities).any(axis=1)        
-        max_distance = 2 * max(self.WIDTH, self.HEIGHT)
-        within_bounds = np.linalg.norm(positions, axis=1) < max_distance        
-        # Combine conditions
-        valid_indices = valid_velocities & within_bounds        
-        # Initialize a new list for particles to keep
-        new_particle_list = []
-        for particle, valid in zip(self.particle_manager.particles, valid_indices):
-            if valid:
-                new_particle_list.append(particle)
-            else:
-                print(f"Removing particle: {particle.letter}")           
-        self.particle_manager.particles = new_particle_list     
-
-#############################################################################################  
     def draw(self, particles, screen , count ):
         """Main drawing function."""
         MAX_TIME_DILATION = 200
@@ -258,29 +320,6 @@ class VisualizationManager:
         value_text = font_dt.render(f"Δt = {max_particle.dt:.1e}", True, (254, 254, 254))
         value_text_rect = value_text.get_rect(centerx=50, y=10)
         screen.blit(value_text, value_text_rect)
-
-    def draw_arrows1(self, E_trans, B_trans):
-        def process_field(field, arrow_scale):
-            magnitude = np.linalg.norm(field, axis=-1)
-            safe_magnitude = np.where(magnitude > self.epsilon, magnitude, np.full_like(magnitude, self.epsilon))
-            direction = field / safe_magnitude[..., np.newaxis]    
-            # Calculate end positions based on the zoomed grid
-            arrow_lengths = 20  # Static length for simplicity, can adjust
-            arrow_end_x = self.x_in + arrow_lengths * direction[..., 0]
-            arrow_end_y = self.y_in + arrow_lengths * direction[..., 1]    
-            start_pos = np.column_stack((self.x_in.ravel(), self.y_in.ravel()))
-            end_pos = np.column_stack((arrow_end_x.ravel(), arrow_end_y.ravel()))    
-            # Convert these positions to screen coordinates using the provided functions
-            start_pos_screen = [self.world_to_screen(x, y, self.zoom_center, self.zoom_factor) for x, y in start_pos]
-            end_pos_screen = [self.world_to_screen(x, y, self.zoom_center, self.zoom_factor) for x, y in end_pos]    
-            return start_pos_screen, end_pos_screen    
-        # Process and draw arrows for both electric and magnetic fields
-        E_start_pos_screen, E_end_pos_screen = process_field(E_trans, arrow_scale=20)
-        B_start_pos_screen, B_end_pos_screen = process_field(B_trans, arrow_scale=20)    
-        for start, end in zip(E_start_pos_screen, E_end_pos_screen):
-            pygame.draw.line(self.electric_field_surface, self.ARROW_COLOR_E, start, end, 1)    
-        for start, end in zip(B_start_pos_screen, B_end_pos_screen):
-            pygame.draw.line(self.electric_field_surface, self.ARROW_COLOR_B, start, end, 2)
     
     def draw_arrows(self, E_trans, B_trans):
         def process_field(field, arrow_scale):
@@ -301,16 +340,7 @@ class VisualizationManager:
         for start, end in zip(E_start_pos, E_end_pos):
             pygame.draw.line(self.electric_field_surface, self.ARROW_COLOR_E, start.astype(int), end.astype(int), 1)    
         for start, end in zip(B_start_pos, B_end_pos):
-            pygame.draw.line(self.electric_field_surface, self.ARROW_COLOR_B, start.astype(int), end.astype(int), 2)
-
-    def update_arrow_grid(self):
-        # Adjust grid spacing dynamically based on zoom factor
-        dynamic_spacing = int(self.GRID_SPACING / self.zoom_factor)
-        dynamic_spacing = max(10, dynamic_spacing)  # Ensure spacing does not get too small    
-        x_positions = range(0, self.WIDTH, dynamic_spacing)
-        y_positions = range(0, self.HEIGHT, dynamic_spacing)
-        self.x_in, self.y_in = np.meshgrid(x_positions, y_positions)    
-        self.redraw_all()  # Make sure this method refreshes the visualization properly     
+            pygame.draw.line(self.electric_field_surface, self.ARROW_COLOR_B, start.astype(int), end.astype(int), 2)  
 
     def draw_particles(self, particles, screen):
         """Draws all particles on the screen using preloaded fonts and optimized calculations."""
@@ -333,7 +363,19 @@ class VisualizationManager:
             pygame.draw.circle(screen, (250, 250, 250), (int(x_screen), int(y_screen)), particle.radius, 0)            
             text = font.render(particle.letter, True, particle.color)
             text_rect = text.get_rect(center=(int(x_screen), int(y_screen)))
-            screen.blit(text, text_rect)  # Blit the text onto the screen                
+            screen.blit(text, text_rect)  # Blit the text onto the screen     
+ 
+#############################################################################################                
+
+
+    def update_arrow_grid(self):
+        # Adjust grid spacing dynamically based on zoom factor
+        dynamic_spacing = int(self.GRID_SPACING / self.zoom_factor)
+        dynamic_spacing = max(10, dynamic_spacing)  # Ensure spacing does not get too small    
+        x_positions = range(0, self.WIDTH, dynamic_spacing)
+        y_positions = range(0, self.HEIGHT, dynamic_spacing)
+        self.x_in, self.y_in = np.meshgrid(x_positions, y_positions)    
+        self.redraw_all()  # Make sure this method refreshes the visualization properly    
 
     def draw_particle_info(self, counter, num_particles):
         part_in = counter % num_particles 
@@ -382,8 +424,7 @@ class VisualizationManager:
             if math.isnan(value) or math.isnan(max_value) or max_value == 0:
                 filled_height = 0  # Default to zero or some other appropriate error handling
             else:
-                filled_height = int(bar_height * (value / max_value))
-        
+                filled_height = int(bar_height * (value / max_value))        
         pygame.draw.circle(self.screen, (250,250,250), (self.WIDTH//2, self.HEIGHT//2), 1)     
         pygame.draw.rect(screen, (255, 255, 255), (bar_x, bar_y, bar_width, bar_height), 1)
         pygame.draw.rect(screen, color, (bar_x, bar_y + bar_height - filled_height, bar_width, filled_height))
@@ -412,8 +453,7 @@ class VisualizationManager:
         scale_text = font.render(f"{scale_length_mm:.1e} mm", True, (255, 255, 255))
         scale_text_rect = scale_text.get_rect(midright=(self.WIDTH - 25 - scale_length_pixels, self.HEIGHT - 20))
         screen.blit(scale_text, scale_text_rect)                
- 
-#############################################################################################    
+     
     def screen_to_world(self, screen_x, screen_y, zoom_center, zoom_factor):
         # Convert screen coordinates to world coordinates
         world_x = (screen_x - zoom_center[0]) / zoom_factor + zoom_center[0]
@@ -440,18 +480,8 @@ class VisualizationManager:
         B_transformed = normalize_field(B_transformed)
         E_transformed = normalize_field(E_transformed)        
         return E_transformed, B_transformed
-#############################################################################################           
-    def update_display(self):
-        # Update the display with the latest drawing
-        pygame.display.flip()
-        self.clock.tick(240)
-
-    def preload_fonts(self):
-        # Define the font sizes you need
-        font_sizes = [16, 18, 24]
-        # Preload fonts and store them in the dictionary
-        self.fonts = {size: pygame.font.Font(None, size) for size in font_sizes}
-    
+        
+#############################################################################################               
     def get_font(self, size):
         """Retrieve a font of the given size, caching it if not already loaded."""
         if size not in self.fonts:
@@ -462,8 +492,7 @@ class VisualizationManager:
         try:
             pygame.quit()
         except Exception as e:
-            print(f"Error shutting down Pygame: {e}")
-    
+            print(f"Error shutting down Pygame: {e}")    
         try:
             if self.window:
                 self.window.close()

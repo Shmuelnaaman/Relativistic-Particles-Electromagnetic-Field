@@ -455,13 +455,28 @@ class ElectromagneticEquations:
             acc_final[i] = particle.acc_traj[indices] if indices < len(particle.acc_traj) else particle.acc_traj[-1]    
         return pos_final, vel_final, acc_final 
         
-    #########################################     
-    def calculate_retarded_distances_vectorized1(self, observer_position, retarded_positions):
-        r_retarded = observer_position - retarded_positions  # Broadcasting happens here
-        r_retarded_mag = np.linalg.norm(r_retarded, axis=1)  # Magnitudes along the last axis
-        r_retarded_unit = np.where(r_retarded_mag[:, np.newaxis] > 0, r_retarded / r_retarded_mag[:, np.newaxis], 0)
-        return r_retarded, r_retarded_mag, r_retarded_unit   
+    #########################################        
+ 
     def calculate_retarded_distances_vectorized(self, observer_position, retarded_positions):
+        # Calculate the displacement vectors between the observer and retarded positions
+        r_retarded = observer_position - retarded_positions
+        # Calculate the magnitudes of these displacement vectors
+        r_retarded_mag = np.linalg.norm(r_retarded, axis=1)        
+        # Create a mask where the distances are exactly zero
+        zero_distance_mask = (r_retarded_mag == 0)        
+        # Initialize the unit vector array
+        r_retarded_unit = np.zeros_like(r_retarded)        
+        # Calculate unit vectors only where there are non-zero distances
+        non_zero_distances = ~zero_distance_mask
+        r_retarded_unit[non_zero_distances] = r_retarded[non_zero_distances] / r_retarded_mag[non_zero_distances, np.newaxis]        
+        # If you need to explicitly set zero vectors for zero distances:
+        r_retarded_unit[zero_distance_mask] = 0    
+        # Optionally, ensure r_retarded is zero where distances are zero
+        r_retarded[zero_distance_mask] = 0
+        r_retarded_mag[zero_distance_mask] = 0    
+        return r_retarded, r_retarded_mag, r_retarded_unit
+
+    def calculate_retarded_distances_vectorized1(self, observer_position, retarded_positions):
         r_retarded = observer_position - retarded_positions        
         r_retarded_mag = np.linalg.norm(r_retarded, axis=1)        
         zero_distance_mask = (r_retarded_mag == 0)    
@@ -488,34 +503,47 @@ class ElectromagneticEquations:
         B_mag = (self.MU_0 / (4 * np.pi)) * (charges * np.linalg.norm(retarded_velocities, axis=1) * sin_theta) / (r_retarded_mag ** 2 + np.finfo(float).eps)
         return B_mag[:, None] * B_dir_unit  
         
-    #########################################
- 
-
-    def calculate_electric_field_vectorized(self, charges, r_retarded, r_retarded_mag, r_retarded_unit, retarded_velocities, retarded_accs):
-        # Define realistic minimums for your simulation
-        min_distance = 1e-12  # Minimum distance in meters (or other suitable unit)
-        min_relative_velocity = 1e-12  # Minimum for (1 - beta * r_unit) to avoid division by a value too close to zero
+    ######################################### 
+        
     
+    def calculate_electric_field_vectorized(self, charges, r_retarded, r_retarded_mag, r_retarded_unit, retarded_velocities, retarded_accs):
+        epsilon = np.finfo(float).eps  # Small constant to prevent division by zero
+        
         # Normalize retarded velocities
         beta = retarded_velocities / self.c
         gamma_ret = self.Gamma_vec(beta)
         one_minus_beta_dot_r = 1 - np.einsum('ij,ij->i', beta, r_retarded_unit)
-    
-        # Use realistic minimums to avoid divide by zero
-        r_retarded_mag_safe = np.maximum(r_retarded_mag, min_distance)
-        one_minus_beta_dot_r_safe = np.maximum(one_minus_beta_dot_r, min_relative_velocity)
-    
-        # Calculate common_factor without epsilon, using realistic minimums
-        common_factor = (charges / (4 * np.pi * self.EPSILON_0 * r_retarded_mag_safe**2))[:, None]  # Ensure it's (n, 1)
-    
-        # Calculate velocity and acceleration terms safely
-        velocity_term = (r_retarded_unit - beta) / (gamma_ret[:, None]**2 * one_minus_beta_dot_r_safe[:, None]**3)
-        acc_term = np.cross(r_retarded_unit, np.cross(r_retarded_unit - beta, retarded_accs / self.c)) / (self.c * one_minus_beta_dot_r_safe[:, None]**3)
-    
+        
+        # Identify safe indices where no divisions by zero occur
+        safe_indices = (r_retarded_mag > epsilon) & (np.abs(one_minus_beta_dot_r) > epsilon)
+        
+        # Filter all arrays to include only safe indices
+        filtered_charges = charges[safe_indices]
+        filtered_r_retarded_mag = r_retarded_mag[safe_indices]
+        filtered_r_retarded_unit = r_retarded_unit[safe_indices]
+        filtered_beta = beta[safe_indices]
+        filtered_gamma_ret = gamma_ret[safe_indices]
+        filtered_one_minus_beta_dot_r = one_minus_beta_dot_r[safe_indices]
+        filtered_retarded_accs = retarded_accs[safe_indices]
+        
+        # Calculate common_factor only for safe indices
+        common_factor = (filtered_charges / (4 * np.pi * self.EPSILON_0 * filtered_r_retarded_mag**2))[:, None]
+        
+        # Calculate velocity and acceleration terms only for safe indices
+        velocity_term = (filtered_r_retarded_unit - filtered_beta) / (filtered_gamma_ret[:, None]**2 * filtered_one_minus_beta_dot_r[:, None]**3)
+        acc_term = np.cross(filtered_r_retarded_unit, np.cross(filtered_r_retarded_unit - filtered_beta, filtered_retarded_accs / self.c)) / (self.c * filtered_one_minus_beta_dot_r[:, None]**3)
+        
         # Combine terms safely
         electric_field = common_factor * (velocity_term + acc_term)
-    
-        return electric_field
+        
+        # Initialize full electric field array
+        full_electric_field = np.zeros((charges.shape[0], 3))
+        full_electric_field[safe_indices] = electric_field
+        
+        return full_electric_field
+        
+  
+
 
     
     def calculate_electric_field_vectorized11(self, charges, r_retarded, r_retarded_mag, r_retarded_unit, retarded_velocities, retarded_accs):
